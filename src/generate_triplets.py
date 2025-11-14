@@ -9,7 +9,7 @@ amino_acids = [
 ]
 
 triplets = [''.join(t) for t in itertools.product(amino_acids, repeat=3)]
-triplet_map = {triplet: None for triplet in triplets}  # values are null in JSON
+triplet_map = {triplet: {"count": 0, "indices": []} for triplet in triplets}
 
 out_path = Path(__file__).with_name('amino_acid_triplets.json')
 with out_path.open('w', encoding='utf-8') as f:
