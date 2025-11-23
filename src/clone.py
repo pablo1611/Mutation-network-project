@@ -16,15 +16,15 @@ class Clone:
         self.ab_target = ab_target
         self.time_po = time_po
         self.nines = []  # List to store extracted nonuplets (nines)
-        self.nine_aa_triplets = []  # List to store translated amino acid triplets
+        self.nine_aa_triplets = []  # List to store (index, translated amino acid triplet or None)
 
 
     def extract_nines(self):
         """
-        Extracts all possible nonuplets (sliding window of size 9, step 1) from the sequence and stores them in self.nines.
+        Extracts all possible nonuplets (sliding window of size 9, step 1) from the sequence and stores (index, nine) tuples in self.nines.
         """
         if self.sequence:
-            self.nines = [self.sequence[i:i+9] for i in range(len(self.sequence) - 8)]
+            self.nines = [(i, self.sequence[i:i+9]) for i in range(len(self.sequence) - 8)]
         else:
             self.nines = []
 
@@ -32,15 +32,16 @@ class Clone:
         """
         Translates each nonuplet in self.nines to an amino acid triplet using CodonMapper.
         If a nonuplet contains '-' or 'N', stores None at that index.
+        Stores results as a list of (index, aa_triplet or None).
         """
         codon_mapper = CodonMapper()
         self.nine_aa_triplets = []
-        for nine in self.nines:
+        for idx, nine in self.nines:
             if '-' in nine or 'N' in nine:
-                self.nine_aa_triplets.append(None)
+                self.nine_aa_triplets.append((idx, None))
             else:
                 aa_triplet = codon_mapper.translate_nine_mer(nine)
-                self.nine_aa_triplets.append(aa_triplet)
+                self.nine_aa_triplets.append((idx, aa_triplet))
 
     def __repr__(self):
         return (
