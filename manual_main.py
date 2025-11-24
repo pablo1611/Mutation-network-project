@@ -10,7 +10,6 @@ if __name__ == "__main__":
 
     csv_path = os.getenv('CLONES_CSV')
     if not csv_path:
-        # FALLBACK: raise error if not set
         csv_path = "Users/leepotashnik/Desktop/study/semester 8+9/Final project/cleaned_seqs.csv"
 
     print("Starting clone loading...")
