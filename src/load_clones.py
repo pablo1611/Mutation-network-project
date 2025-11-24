@@ -1,9 +1,9 @@
 import pandas as pd
 from src.clone import Clone
+from src.networks import NetworksManager
 
 
-
-def load_clones(csv_path):
+def load_clones(csv_path, build_networks=False):
     """
     Loads clone data from a CSV file, filters to keep only the row with the maximum copy_number for each clone_id,
     and returns a dictionary mapping clone_id to Clone objects for fast lookup.
@@ -24,6 +24,8 @@ def load_clones(csv_path):
     # Filter to keep only the row with the max copy_number for each clone_id
     filtered_df = df.loc[df.groupby('clone_id')['copy_number'].idxmax()]
     clones_dict = {}
+    networks = NetworksManager(ks=(3, 9)) if build_networks else None
+
     for _, row in filtered_df.iterrows():
         clone = Clone(
             seq_id=row.get('seq_id'),
@@ -40,5 +42,10 @@ def load_clones(csv_path):
             time_po=row.get('time_point')
         )
         clones_dict[row.get('clone_id')] = clone
-    return clones_dict
+        # Update networks while loading (single pass)
+        if build_networks and clone.sequence:
+            networks.add_sequence(str(clone.sequence), clone.clone_id)
 
+    if build_networks:
+        return clones_dict, networks
+    return clones_dict
