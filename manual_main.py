@@ -3,15 +3,15 @@ from src.load_clones import load_clones
 if __name__ == "__main__":
     import time
     import os
-    from dotenv import load_dotenv
+    
 
     # load .env from project root (where this script is run)
-    load_dotenv()
+    #load_dotenv()
 
-    csv_path = os.getenv('CLONES_CSV')
-    if not csv_path:
-        csv_path = "Users/leepotashnik/Desktop/study/semester 8+9/Final project/cleaned_seqs.csv"
-
+    #csv_path = os.getenv('CLONES_CSV')
+    #if not csv_path:
+     #   csv_path = "Users/leepotashnik/Desktop/study/semester 8+9/Final project/cleaned_seqs.csv"
+    csv_path = r"C:\Studies\Semester 2 24-25\project\cleaned_seqs.csv"
     print("Starting clone loading...")
     start_time = time.time()
     result = load_clones(csv_path, True)
