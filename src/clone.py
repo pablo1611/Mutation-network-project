@@ -24,7 +24,7 @@ class Clone:
         Extracts all possible nonuplets (sliding window of size 9, step 1) from the sequence and stores (index, nine) tuples in self.nines.
         """
         if self.sequence:
-            self.nines = [(i, self.sequence[i:i+9]) for i in range(len(self.sequence) - 8)]
+            self.nines = [(i+1, self.sequence[i:i+9]) for i in range(len(self.sequence) - 8)]
         else:
             self.nines = []
 
