@@ -1,8 +1,10 @@
 from src.load_clones import load_clones
+from src.build_triplet_df import build_triplet_df
+import time
+import os
+    
 
 if __name__ == "__main__":
-    import time
-    import os
     
 
     # load .env from project root (where this script is run)
@@ -26,7 +28,23 @@ if __name__ == "__main__":
     print(f"took {time.time() - start_time:.2f} seconds.")
     #for clone in clones:
     #    print(clone)
-    clone_id =646357
+    # Build triplet DataFrame for all clones
+    start_time = time.time()
+    triplet_df = build_triplet_df(clones)
+    print(f"Building triplet DataFrame took {time.time() - start_time:.2f} seconds.")
+    print(triplet_df.head())
+
+    # Verifier: sum of non-None triplets for all clones should equal DataFrame length
+    total_triplets = sum(
+        sum(1 for idx, aa_triplet in clone.nine_aa_triplets if aa_triplet is not None)
+        for clone in clones.values()
+    )
+    print(f"Verifier: sum of non-None triplets across all clones = {total_triplets}")
+    print(f"Triplet DataFrame length = {len(triplet_df)}")
+    print(f"Match: {total_triplets == len(triplet_df)}")
+
+
+    clone_id =711418
     clone = clones.get(clone_id)
     if clone:
         clone.extract_nines()
