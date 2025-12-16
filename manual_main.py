@@ -2,20 +2,20 @@ from src.load_clones import load_clones
 from src.build_triplet_df import build_triplet_df
 import time
 import os
+from dotenv import load_dotenv
     
 
 if __name__ == "__main__":
     
 
-    # load .env from project root (where this script is run)
-    #load_dotenv()
+    # load .env from project root
+    load_dotenv()
 
-    #csv_path = os.getenv('CLONES_CSV')
-    #if not csv_path:
-     #   csv_path = "Users/leepotashnik/Desktop/study/semester 8+9/Final project/cleaned_seqs.csv"
-    csv_path = r"C:\Studies\Semester 2 24-25\project\cleaned_seqs.csv"
+    csv_path = os.getenv('CLONES_CSV')
+    if not csv_path:
+        csv_path = "/Users/leepotashnik/Desktop/study/semester 8+9/Final project/cleaned_seqs.csv"
     print("Starting clone loading...")
-    start_time = time.time()
+    start_time1 = time.time()
     result = load_clones(csv_path, True)
     # load_clones returns either clones_dict or (clones_dict, networks) when build_networks=True
     if isinstance(result, tuple):
@@ -25,7 +25,7 @@ if __name__ == "__main__":
         networks = None
 
     print(f"Loaded {len(clones)} clones:")
-    print(f"took {time.time() - start_time:.2f} seconds.")
+    print(f"took {time.time() - start_time1:.2f} seconds.")
     #for clone in clones:
     #    print(clone)
     # Build triplet DataFrame for all clones
@@ -71,4 +71,30 @@ if __name__ == "__main__":
         """
     else:
         print(f"Clone with clone_id {clone_id} not found.")
-    print(f"Finished in {time.time() - start_time:.2f} seconds.")
+    print(f"Finished cloning in {time.time() - start_time1:.2f} seconds.")
+
+    # --- EXPORT: write occurrence-level triplet DFs and aggregated network CSVs ---
+# Uncomment and edit `out_dir` before running.
+    import os
+
+    out_dir = os.path.expanduser("/Users/leepotashnik/Desktop/study/semester 8+9/Final project")
+    os.makedirs(out_dir, exist_ok=True)
+
+    # 1) occurrence-level AA triplet dataframes (exact shape as build_triplet_df)
+    triplets_r1 = build_triplet_df(clones, region='r1')   # triplet, clone_id, index
+    triplets_r2 = build_triplet_df(clones, region='r2')
+    triplets_r1.to_csv(os.path.join(out_dir, "triplets_r1_occurrences.csv"), index=False)
+    triplets_r2.to_csv(os.path.join(out_dir, "triplets_r2_occurrences.csv"), index=False)
+
+    # 2) aggregated node-level CSVs for networks (kmer, count, clones)
+    # Uses the compact aggregated CSV writer added to NetworksManager
+    # Writes:
+    #   base.aa3.r1.aggregated.csv, base.aa3.r2.aggregated.csv,
+    #   base.k9.r1.aggregated.csv, base.k9.r2.aggregated.csv
+    if networks:
+        # choose base filename (no extension)
+        base = os.path.join(out_dir, "networks_base")
+        networks.dump_region_aggregated_csvs(base)
+
+    print("Exports written to:", out_dir)
+    print("total time:", time.time() - start_time1, "seconds.")
