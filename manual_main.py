@@ -1,5 +1,6 @@
 from src.load_clones import load_clones
 from src.build_triplet_df import build_triplet_df
+from src.networks import compute_network_distance
 import time
 import os
 import argparse
@@ -91,6 +92,13 @@ if __name__ == "__main__":
     # triplets_r2 = build_triplet_df(clones, region='r2')
     # triplets_r1.to_csv(os.path.join(out_dir, "triplets_r1_occurrences.csv"), index=False)
     # triplets_r2.to_csv(os.path.join(out_dir, "triplets_r2_occurrences.csv"), index=False)
+
+    # Compute distance between R1 and R2 AA triplet networks
+    if networks:
+        aa_net_r1 = networks.aa_network_region['r1']
+        aa_net_r2 = networks.aa_network_region['r2']
+        distance = compute_network_distance(aa_net_r1, aa_net_r2)
+        print(f"Distance between R1 and R2 AA triplet networks: {distance:.4f}")
 
     # 2) aggregated node-level CSVs for networks (kmer, count, clones)
     # Uses the compact aggregated CSV writer added to NetworksManager
