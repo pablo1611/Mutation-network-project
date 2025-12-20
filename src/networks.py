@@ -355,3 +355,35 @@ class NetworksManager:
         if self.aa_network:
             out['aa3'] = {'nodes': self.aa_network.node_count(), 'occurrences': self.aa_network.total_occurrences()}
         return out
+
+
+def compute_network_distance(network1: KmerNetwork, network2: KmerNetwork) -> float:
+    """
+    Compute the distance (dissimilarity) between two KmerNetwork instances based on shared triplet clones.
+
+    The distance R is the average over all unique kmers of:
+    R_kmer = 1 - (ab / (A + B))
+    where A is number of clones for kmer in network1,
+    B in network2, ab is intersection.
+
+    Returns the average R across all kmers present in at least one network.
+    """
+    all_kmers = set(network1.nodes.keys()) | set(network2.nodes.keys())
+    if not all_kmers:
+        return 0.0  # no kmers, distance 0
+
+    total_r = 0.0
+    count = 0
+    for kmer in all_kmers:
+        clones1 = network1.nodes.get(kmer, {}).get('clones', set())
+        clones2 = network2.nodes.get(kmer, {}).get('clones', set())
+        A = len(clones1)
+        B = len(clones2)
+        ab = len(clones1 & clones2)
+        if A + B > 0:
+            r = 1 - (ab / (A + B))
+        else:
+            r = 0.0  # shouldn't happen
+        total_r += r
+        count += 1
+    return total_r / count if count > 0 else 0.0
