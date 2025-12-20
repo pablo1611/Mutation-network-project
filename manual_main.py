@@ -2,18 +2,23 @@ from src.load_clones import load_clones
 from src.build_triplet_df import build_triplet_df
 import time
 import os
-from dotenv import load_dotenv
-    
+import argparse
+from scripts.plot_aa3_plotly import plot_from_aa_network
+import os
 
 if __name__ == "__main__":
-    
+    parser = argparse.ArgumentParser(description='Manual main with optional AA3 plotting')
+    parser.add_argument('--csv', help='Path to clones CSV (overrides hardcoded path)')
+    parser.add_argument('--plot-aa3', action='store_true', help='Show/write AA3 plot after building networks')
+    parser.add_argument('--plot-target', type=str, default=None, help='Target AA triplet to focus on')
+    parser.add_argument('--plot-out', type=str, default=None, help='If set, write interactive HTML to this path instead of showing')
+    args = parser.parse_args()
 
-    # load .env from project root
-    load_dotenv()
+    # load .env from project root (left commented intentionally)
+    # load_dotenv()
 
-    csv_path = os.getenv('CLONES_CSV')
-    if not csv_path:
-        csv_path = "/Users/leepotashnik/Desktop/study/semester 8+9/Final project/cleaned_seqs.csv"
+    # CSV path (can be overridden via --csv)
+    csv_path = args.csv or r"C:\Studies\Semester 2 24-25\project\cleaned_seqs.csv"
     print("Starting clone loading...")
     start_time1 = time.time()
     result = load_clones(csv_path, True)
@@ -72,29 +77,39 @@ if __name__ == "__main__":
     else:
         print(f"Clone with clone_id {clone_id} not found.")
     print(f"Finished cloning in {time.time() - start_time1:.2f} seconds.")
+    print()
 
     # --- EXPORT: write occurrence-level triplet DFs and aggregated network CSVs ---
 # Uncomment and edit `out_dir` before running.
-    import os
+    # import os
 
-    out_dir = os.path.expanduser("/Users/leepotashnik/Desktop/study/semester 8+9/Final project")
-    os.makedirs(out_dir, exist_ok=True)
+    # out_dir = os.path.expanduser("/Users/leepotashnik/Desktop/study/semester 8+9/Final project")
+    # os.makedirs(out_dir, exist_ok=True)
 
-    # 1) occurrence-level AA triplet dataframes (exact shape as build_triplet_df)
-    triplets_r1 = build_triplet_df(clones, region='r1')   # triplet, clone_id, index
-    triplets_r2 = build_triplet_df(clones, region='r2')
-    triplets_r1.to_csv(os.path.join(out_dir, "triplets_r1_occurrences.csv"), index=False)
-    triplets_r2.to_csv(os.path.join(out_dir, "triplets_r2_occurrences.csv"), index=False)
+    # # 1) occurrence-level AA triplet dataframes (exact shape as build_triplet_df)
+    # triplets_r1 = build_triplet_df(clones, region='r1')   # triplet, clone_id, index
+    # triplets_r2 = build_triplet_df(clones, region='r2')
+    # triplets_r1.to_csv(os.path.join(out_dir, "triplets_r1_occurrences.csv"), index=False)
+    # triplets_r2.to_csv(os.path.join(out_dir, "triplets_r2_occurrences.csv"), index=False)
 
     # 2) aggregated node-level CSVs for networks (kmer, count, clones)
     # Uses the compact aggregated CSV writer added to NetworksManager
     # Writes:
     #   base.aa3.r1.aggregated.csv, base.aa3.r2.aggregated.csv,
     #   base.k9.r1.aggregated.csv, base.k9.r2.aggregated.csv
-    if networks:
-        # choose base filename (no extension)
-        base = os.path.join(out_dir, "networks_base")
-        networks.dump_region_aggregated_csvs(base)
+    # if networks:
+    #     # choose base filename (no extension)
+    #     base = os.path.join(out_dir, "networks_base")
+    #     networks.dump_region_aggregated_csvs(base)
 
-    print("Exports written to:", out_dir)
-    print("total time:", time.time() - start_time1, "seconds.")
+    # print("Exports written to:", out_dir)
+    # print("total time:", time.time() - start_time1, "seconds.")
+
+    # Optional: plot AA network from the already-built `networks` object.
+    if networks and args.plot_aa3:
+        try:
+            from scripts.plot_aa3_plotly import plot_from_aa_network
+            plot_from_aa_network(networks.get_aa_network(), target=args.plot_target, out_html=args.plot_out)
+        except Exception as e:
+            print('Plotting failed:', e)
+    plot_from_aa_network(networks.get_aa_network())
