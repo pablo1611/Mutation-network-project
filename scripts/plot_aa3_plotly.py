@@ -80,75 +80,79 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
         text=hover_texts
     ))
 
-    if not target:
-        target = nodes[0]
-
-    if target not in coords_map:
+    # Do not force a server-side default target: let the user pick one on the page.
+    # If a target is provided, validate it; otherwise operate without an initial highlight.
+    if target is not None and target not in coords_map:
         raise ValueError(f"Target node '{target}' not found in network nodes")
 
     colors = ['red', 'green', 'blue']
-    # draw target marker
-    tx, ty, tz = coords_map[target]
-    target_meta = counts_map.get(target, {}) if counts_map else {}
-    target_count = target_meta.get('count', 0) if isinstance(target_meta, dict) else target_meta
-    fig.add_trace(go.Scatter3d(
-        x=[tx], y=[ty], z=[tz],
-        mode='markers+text',
-        marker=dict(size=10 + (math.log1p(target_count) * 2), color='black', symbol='diamond', line=dict(color='white', width=1)),
-        text=[f"<b>{target}</b><br>count: {target_count}"], textposition='top center',
-        name='Target', showlegend=False,
-        hoverinfo='text'
-    ))
+    # If no initial target was provided, don't draw a server-side highlighted target.
+    # We'll add an empty placeholder trace for the target marker so the client can populate it.
+    if target is not None:
+        # draw initial target marker and its static neighbor arcs (kept for backwards compatibility)
+        tx, ty, tz = coords_map[target]
+        target_meta = counts_map.get(target, {}) if counts_map else {}
+        target_count = target_meta.get('count', 0) if isinstance(target_meta, dict) else target_meta
+        fig.add_trace(go.Scatter3d(
+            x=[tx], y=[ty], z=[tz],
+            mode='markers+text',
+            marker=dict(size=10 + (math.log1p(target_count) * 2), color='black', symbol='diamond', line=dict(color='white', width=1)),
+            text=[f"<b>{target}</b><br>count: {target_count}"], textposition='top center',
+            name='Target', showlegend=False,
+            hoverinfo='text'
+        ))
 
-    nodes_set = set(nodes)
-    max_dim = max(len(letters) - 1, 1)
-    offset_mag = max(3, max_dim * 0.2)
+        nodes_set = set(nodes)
+        max_dim = max(len(letters) - 1, 1)
+        offset_mag = max(3, max_dim * 0.2)
 
-    # For each neighbor differing by one position, draw a curved arc with midpoint offset along axis
-    for dim in range(3):
-        for alt in letters:
-            if alt == target[dim]:
-                continue
-            neigh = list(target)
-            neigh[dim] = alt
-            neigh = ''.join(neigh)
-            if neigh not in nodes_set:
-                continue
+        # For each neighbor differing by one position, draw a curved arc with midpoint offset along axis
+        for dim in range(3):
+            for alt in letters:
+                if alt == target[dim]:
+                    continue
+                neigh = list(target)
+                neigh[dim] = alt
+                neigh = ''.join(neigh)
+                if neigh not in nodes_set:
+                    continue
 
-            sx, sy, sz = coords_map[target]
-            tx2, ty2, tz2 = coords_map[neigh]
-            p0 = np.array([sx, sy, sz], dtype=float)
-            p2 = np.array([tx2, ty2, tz2], dtype=float)
-            mid = (p0 + p2) / 2.0
-            # offset control point along axis corresponding to dim
-            axis = np.zeros(3)
-            axis[dim] = 1.0
-            p1 = mid + axis * offset_mag
+                sx, sy, sz = coords_map[target]
+                tx2, ty2, tz2 = coords_map[neigh]
+                p0 = np.array([sx, sy, sz], dtype=float)
+                p2 = np.array([tx2, ty2, tz2], dtype=float)
+                mid = (p0 + p2) / 2.0
+                # offset control point along axis corresponding to dim
+                axis = np.zeros(3)
+                axis[dim] = 1.0
+                p1 = mid + axis * offset_mag
 
-            xs, ys, zs = quad_bezier(p0, p1, p2, steps=30)
-            fig.add_trace(go.Scatter3d(
-                x=xs, y=ys, z=zs,
-                mode='lines',
-                line=dict(color=colors[dim], width=3),
-                hoverinfo='text',
-                text=[f"{target} → {neigh} (pos {dim+1})"] * len(xs),
-                showlegend=False
-            ))
+                xs, ys, zs = quad_bezier(p0, p1, p2, steps=30)
+                fig.add_trace(go.Scatter3d(
+                    x=xs, y=ys, z=zs,
+                    mode='lines',
+                    line=dict(color=colors[dim], width=3),
+                    hoverinfo='text',
+                    text=[f"{target} → {neigh} (pos {dim+1})"] * len(xs),
+                    showlegend=False
+                ))
 
     fig.update_layout(
-        title=f"AA-triplet network: target {target}",
+        title="AA-triplet network",
         scene=dict(aspectmode='cube'),
-        margin=dict(l=0, r=0, b=0, t=50),
+        # give more top margin so overlaid controls don't cover the title
+        margin=dict(l=0, r=0, b=0, t=80),
+        # include simple Zoom Out / Zoom In buttons positioned to the right
         updatemenus=[dict(type='buttons', direction='left', buttons=[
             dict(label='Zoom Out', method='relayout', args=[{"scene.xaxis.range": [ -1, len(letters)],
                                                                "scene.yaxis.range": [ -1, len(letters)],
                                                                "scene.zaxis.range": [ -1, len(letters)],
                                                                "scene.camera.eye": {"x": 1.5, "y": 1.5, "z": 1.5}}]),
-            dict(label=f'Zoom In ({target})', method='relayout', args=[{"scene.xaxis.range": [tx-3, tx+3],
-                                                                         "scene.yaxis.range": [ty-3, ty+3],
-                                                                         "scene.zaxis.range": [tz-3, tz+3],
-                                                                         "scene.camera.eye": {"x": 0.6, "y": 0.6, "z": 0.6}}])
-        ], pad={"r": 10, "t": 10}, showactive=True, x=0.1, xanchor='left', y=1.05, yanchor='top')]
+            dict(label='Zoom In', method='relayout', args=[{"scene.xaxis.range": [0, 1],
+                                                           "scene.yaxis.range": [0, 1],
+                                                           "scene.zaxis.range": [0, 1],
+                                                           "scene.camera.eye": {"x": 0.6, "y": 0.6, "z": 0.6}}])
+        ], pad={"r": 10, "t": 10}, showactive=True, x=0.98, xanchor='right', y=1.05, yanchor='top')]
     )
     # Add three empty placeholder traces for hovered-neighbor arcs (pos1,pos2,pos3).
     hover_trace_idxs = []
@@ -156,6 +160,11 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
         tr = go.Scatter3d(x=[], y=[], z=[], mode='lines', line=dict(color=col, width=4), hoverinfo='none', name=f'neighbors-pos{i+1}')
         fig.add_trace(tr)
         hover_trace_idxs.append(len(fig.data) - 1)
+
+    # add a placeholder trace for the dynamic target marker (client will populate it)
+    target_trace = go.Scatter3d(x=[], y=[], z=[], mode='markers+text', marker=dict(size=10, color='black', symbol='diamond', line=dict(color='white', width=1)), text=[], textposition='top center', name='Target', showlegend=False, hoverinfo='text')
+    fig.add_trace(target_trace)
+    target_trace_idx = len(fig.data) - 1
 
     # If an output path is provided, write an interactive HTML file and print location.
     if out_html:
@@ -165,7 +174,11 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
             'neighbors': {},
             'letters': letters,
             'colors': colors,
-            'hover_trace_idxs': hover_trace_idxs
+            # only expose an initial target if explicitly provided by the caller
+            'initial_target': target if target is not None else '',
+            'hover_trace_idxs': hover_trace_idxs,
+            'target_trace_idx': target_trace_idx,
+            'counts': {k: (counts_map.get(k, {}).get('count', 0) if isinstance(counts_map.get(k, {}), dict) else counts_map.get(k, 0)) for k in nodes}
         }
         # build neighbors mapping now
         nodes_set = set(nodes)
@@ -184,22 +197,22 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
 
         html_str = fig.to_html(include_plotlyjs='cdn', full_html=True)
         # append JS to handle hover/click events and draw neighbor arcs dynamically
-        extra_js = f"""
+        extra_js = """
 <script>
-const payload = {json.dumps(payload)};
-function quadBezierPoints(p0, p1, p2, steps) {{
+const payload = """ + json.dumps(payload) + """;
+function quadBezierPoints(p0, p1, p2, steps) {
     const pts = [];
-    for (let i=0;i<steps;i++){{
+    for (let i=0;i<steps;i++){
         const t = i/(steps-1);
         const x = (1-t)*(1-t)*p0[0] + 2*(1-t)*t*p1[0] + t*t*p2[0];
         const y = (1-t)*(1-t)*p0[1] + 2*(1-t)*t*p1[1] + t*t*p2[1];
         const z = (1-t)*(1-t)*p0[2] + 2*(1-t)*t*p1[2] + t*t*p2[2];
         pts.push([x,y,z]);
-    }}
+    }
     return pts;
-}}
+}
 
-function buildLineSegments(nodeId) {{
+function buildLineSegments(nodeId) {
     const neighs = payload.neighbors[nodeId] || [];
     const coords = payload.coords;
     const letters = payload.letters;
@@ -207,7 +220,7 @@ function buildLineSegments(nodeId) {{
     const offset_mag = Math.max(3, max_dim * 0.2);
     const steps = 30;
     const perDim = [[],[],[]];
-    for (const nb of neighs){{
+    for (const nb of neighs){
         const dim = nb.pos;
         const p0 = coords[nodeId];
         const p2 = coords[nb.id];
@@ -216,18 +229,18 @@ function buildLineSegments(nodeId) {{
         const p1 = [mid[0]+axis[0]*offset_mag, mid[1]+axis[1]*offset_mag, mid[2]+axis[2]*offset_mag];
         const pts = quadBezierPoints(p0,p1,p2,steps);
         const xs = [], ys = [], zs = [];
-        for (let i=0;i<pts.length;i++){{ xs.push(pts[i][0]); ys.push(pts[i][1]); zs.push(pts[i][2]); }}
+        for (let i=0;i<pts.length;i++){ xs.push(pts[i][0]); ys.push(pts[i][1]); zs.push(pts[i][2]); }
         xs.push(null); ys.push(null); zs.push(null);
         perDim[dim].push({x: xs, y: ys, z: zs});
-    }}
+    }
     const out = [ {x:[], y:[], z:[]}, {x:[], y:[], z:[]}, {x:[], y:[], z:[]} ];
-    for (let d=0; d<3; d++){{
-        for (const seg of perDim[d]){{ out[d].x = out[d].x.concat(seg.x); out[d].y = out[d].y.concat(seg.y); out[d].z = out[d].z.concat(seg.z); }}
-    }}
+    for (let d=0; d<3; d++){
+        for (const seg of perDim[d]){ out[d].x = out[d].x.concat(seg.x); out[d].y = out[d].y.concat(seg.y); out[d].z = out[d].z.concat(seg.z); }
+    }
     return out;
-}}
+}
 
-document.addEventListener('DOMContentLoaded', function() {{
+document.addEventListener('DOMContentLoaded', function() {
     const gd = document.querySelectorAll('.plotly-graph-div')[0];
     // add input + button to allow dynamic zoom to typed node id
     const controls = document.createElement('div');
@@ -239,31 +252,139 @@ document.addEventListener('DOMContentLoaded', function() {{
     input.placeholder = 'Enter node id (e.g. ABC)';
     input.style.padding = '4px';
     input.style.width = '140px';
+    // attach a datalist so users can pick an existing node from the site
+    const dataList = document.createElement('datalist');
+    dataList.id = 'node-list';
+    for (const id of Object.keys(payload.coords)){
+        const opt = document.createElement('option'); opt.value = id; dataList.appendChild(opt);
+    }
+    // link input to datalist and set initial value if provided
+    input.setAttribute('list', 'node-list');
+    if (payload.initial_target) input.value = payload.initial_target;
     const btn = document.createElement('button');
     btn.textContent = 'Zoom & Highlight';
+    // hide the small auxiliary button to avoid confusion; use the explicit Zoom In button below
+    btn.style.display = 'none';
     btn.style.padding = '4px 8px';
     controls.appendChild(input);
+    controls.appendChild(dataList);
     controls.appendChild(btn);
-    if (gd && gd.parentNode) gd.parentNode.insertBefore(controls, gd);
+    if (gd && gd.parentNode) {
+        try { document.body.appendChild(controls); } catch(e) { gd.parentNode.insertBefore(controls, gd); }
+    }
     let lockedNode = null;
     let hoverNode = null;
-    function zoomToNode(nodeId) {{
-        if(!payload.coords[nodeId]) {{ alert('Node "' + nodeId + '" not found'); return; }}
+    // preserve original title to restore when clearing selection
+    const originalTitle = (gd && gd.layout && gd.layout.title && (gd.layout.title.text || gd.layout.title)) || document.title || '';
+    // style controls to avoid overlapping plot title and add a separate title span
+    try {
+        // Use fixed positioning so controls remain visible regardless of plot container
+        controls.style.position = 'fixed';
+        controls.style.top = '12px';
+        controls.style.right = '12px';
+        controls.style.zIndex = '2147483647';
+        controls.style.background = 'rgba(255,255,255,0.95)';
+        controls.style.borderRadius = '6px';
+        controls.style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)';
+        controls.style.padding = '6px';
+    } catch(e) {}
+    const titleSpan = document.createElement('div');
+    titleSpan.style.fontSize = '14px';
+    titleSpan.style.fontWeight = '600';
+    titleSpan.style.marginRight = '12px';
+    titleSpan.textContent = originalTitle || 'AA-triplet network';
+    // show initial target in the small title span if provided
+    try { if (payload.initial_target) titleSpan.textContent = `AA-triplet network: target ${payload.initial_target}`; } catch(e) {}
+    try { controls.insertBefore(titleSpan, controls.firstChild); } catch(e) {}
+    // keep built-in Plotly updatemenus (we position them to the right in layout)
+    // add explicit Zoom Out / Zoom In buttons to controls (placed to the right)
+    const zoomOutBtn = document.createElement('button');
+    zoomOutBtn.textContent = 'Zoom Out';
+    zoomOutBtn.style.padding = '4px 8px';
+    zoomOutBtn.style.marginLeft = '6px';
+    const zoomInBtn = document.createElement('button');
+    zoomInBtn.textContent = 'Zoom In (input)';
+    zoomInBtn.style.padding = '4px 8px';
+    zoomInBtn.style.marginLeft = '6px';
+    // hide auxiliary highlight button
+    btn.style.display = 'none';
+    // add a visible Search button that will zoom to the typed triplet
+    const searchBtn = document.createElement('button');
+    searchBtn.textContent = 'Search';
+    searchBtn.style.padding = '4px 8px';
+    searchBtn.style.marginLeft = '6px';
+    controls.appendChild(searchBtn);
+    controls.appendChild(zoomOutBtn);
+    controls.appendChild(zoomInBtn);
+    let zoomInTarget = null;
+    let builtZoomInBtn = null;
+    let builtZoomOutBtn = null;
+    function zoomToNode(nodeId) {
+        if(!payload.coords[nodeId]) { alert('Node "' + nodeId + '" not found'); return; }
         const c = payload.coords[nodeId];
         const range = 3;
         const xmin = c[0]-range, xmax = c[0]+range;
         const ymin = c[1]-range, ymax = c[1]+range;
         const zmin = c[2]-range, zmax = c[2]+range;
-        Plotly.relayout(gd, {{"scene.xaxis.range": [xmin, xmax], "scene.yaxis.range": [ymin, ymax], "scene.zaxis.range": [zmin, zmax], "scene.camera.eye": {{"x":0.6,"y":0.6,"z":0.6}}}});
+        Plotly.relayout(gd, {"scene.xaxis.range": [xmin, xmax], "scene.yaxis.range": [ymin, ymax], "scene.zaxis.range": [zmin, zmax], "scene.camera.eye": {"x":0.6,"y":0.6,"z":0.6}});
         // highlight neighbours and lock
         if(!payload.neighbors[nodeId]) return;
         lockedNode = nodeId;
         const segs = buildLineSegments(nodeId);
-        for(let d=0; d<3; d++){{ const idx = payload.hover_trace_idxs[d]; Plotly.restyle(gd, {{x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}}, [idx]); }}
-    }}
-    btn.addEventListener('click', function() {{ zoomToNode(input.value.trim()); }});
-    gd.on('plotly_hover', function(evt){{
-        try{{
+        for(let d=0; d<3; d++){ const idx = payload.hover_trace_idxs[d]; Plotly.restyle(gd, {x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}, [idx]); }
+        // update plot title to reflect current target
+        try { Plotly.relayout(gd, {"title.text": `AA-triplet network: target ${nodeId}`}); } catch(e) { console.warn('Could not update title', e); }
+        // update dynamic title span (controls label)
+        try { if (titleSpan) titleSpan.textContent = `AA-triplet network: target ${nodeId}`; } catch(e) {}
+        // update Zoom In button label and remember target
+        try { zoomInTarget = nodeId; zoomInBtn.textContent = `Zoom In (${nodeId})`; } catch(e) {}
+        try { if (builtZoomInBtn) builtZoomInBtn.textContent = `Zoom In (${nodeId})`; } catch(e) {}
+        // update the placeholder target trace so the selected node is highlighted
+        try {
+            const cnt = payload.counts && payload.counts[nodeId] ? payload.counts[nodeId] : 0;
+            const sz = 10 + (Math.log(1 + cnt) * 2);
+            Plotly.restyle(gd, {x: [[c[0]]], y: [[c[1]]], z: [[c[2]]], text: [[`<b>${nodeId}</b><br>count: ${cnt}`]], 'marker.size': [[sz]]}, [payload.target_trace_idx]);
+        } catch(e) { console.warn('Could not update target trace', e); }
+    }
+    btn.addEventListener('click', function() { zoomToNode(input.value.trim().toUpperCase()); });
+    // allow pressing Enter in the input to trigger the same zoom/highlight
+    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault();
+            // perform search on Enter
+            const val = input.value.trim().toUpperCase();
+            if(!val){ alert('Please enter a triplet to search'); return; }
+            if(!payload.coords[val]){ alert('Triplet "' + val + '" not found in network'); return; }
+            zoomToNode(val);
+        } });
+
+    // Search button click: validate and zoom to typed triplet
+    searchBtn.addEventListener('click', function(){
+        const val = (input.value||'').trim().toUpperCase();
+        if(!val){ alert('Please enter a triplet to search'); return; }
+        if(!payload.coords[val]){ alert('Triplet "' + val + '" not found in network'); return; }
+        zoomToNode(val);
+    });
+    // Zoom Out button: restore full ranges
+    zoomOutBtn.addEventListener('click', function(){
+        const full = Math.max((payload.letters?payload.letters.length:0)-1, 1);
+        try { Plotly.relayout(gd, {"scene.xaxis.range": [-1, full], "scene.yaxis.range": [-1, full], "scene.zaxis.range": [-1, full], "scene.camera.eye": {"x":1.5, "y":1.5, "z":1.5}}); } catch(e) {}
+        zoomInTarget = null; zoomInBtn.textContent = 'Zoom In';
+        try { if (titleSpan) titleSpan.textContent = originalTitle; } catch(e) {}
+    });
+    // Zoom In button: prioritize typed input then fallback to last target or initial
+    zoomInBtn.addEventListener('click', function(){
+        const typed = input.value.trim().toUpperCase();
+        const target = typed || zoomInTarget || payload.initial_target;
+        if(!target) { alert('No target specified in the input'); return; }
+        zoomToNode(target);
+    });
+    // remove Plotly's built-in updatemenus so our on-page controls are the authoritative Zoom buttons
+    try {
+        Plotly.relayout(gd, {updatemenus: []});
+    } catch(e) {
+        console.warn('Could not remove built-in updatemenus', e);
+    }
+    gd.on('plotly_hover', function(evt){
+        try{
             const point = evt.points[0];
             let hoverText = point.text || point.customdata || '';
             const nodeId = String(hoverText).split('<br>')[0];
@@ -271,58 +392,76 @@ document.addEventListener('DOMContentLoaded', function() {{
             if(lockedNode && lockedNode !== nodeId) return;
             if(!payload.neighbors[nodeId]) return;
             const segs = buildLineSegments(nodeId);
-            for(let d=0; d<3; d++){{
+            for(let d=0; d<3; d++){
                 const idx = payload.hover_trace_idxs[d];
-                Plotly.restyle(gd, {{x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}}, [idx]);
-            }}
-        }} catch(e){{ console.error('hover handler error', e); }}
-    }});
+                Plotly.restyle(gd, {x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}, [idx]);
+            }
+        } catch(e){ console.error('hover handler error', e); }
+    });
 
-    gd.on('plotly_click', function(evt){{
-        if(evt && evt.points && evt.points.length>0){{
+    gd.on('plotly_click', function(evt){
+        if(evt && evt.points && evt.points.length>0){
             const point = evt.points[0];
             const nodeId = String((point.text||'').split('<br>')[0]);
             if(!payload.neighbors[nodeId]) return;
-            if(lockedNode === nodeId){{
+            if(lockedNode === nodeId){
                 lockedNode = null;
-                if(hoverNode){{
+                if(hoverNode){
                     const segs = buildLineSegments(hoverNode);
-                    for(let d=0; d<3; d++){{
+                    for(let d=0; d<3; d++){
                         const idx = payload.hover_trace_idxs[d];
-                        Plotly.restyle(gd, {{x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}}, [idx]);
-                    }}
-                }} else {{
-                    for(let d=0; d<3; d++){{
+                        Plotly.restyle(gd, {x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}, [idx]);
+                    }
+                } else {
+                    for(let d=0; d<3; d++){
                         const idx = payload.hover_trace_idxs[d];
-                        Plotly.restyle(gd, {{x: [[]], y: [[]], z: [[]]}}, [idx]);
-                    }}
-                }}
-            }} else {{
+                        Plotly.restyle(gd, {x: [[]], y: [[]], z: [[]]}, [idx]);
+                    }
+                }
+                // restore original title when unlocking
+                try { Plotly.relayout(gd, {"title.text": originalTitle}); } catch(e) {}
+                try { if (titleSpan) titleSpan.textContent = originalTitle; } catch(e) {}
+                // clear dynamic target trace
+                try { Plotly.restyle(gd, {x: [[]], y: [[]], z: [[]], text: [[]]}, [payload.target_trace_idx]); } catch(e) {}
+            } else {
                 lockedNode = nodeId;
                 const segs = buildLineSegments(nodeId);
-                for(let d=0; d<3; d++){{
+                for(let d=0; d<3; d++){
                     const idx = payload.hover_trace_idxs[d];
-                    Plotly.restyle(gd, {{x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}}, [idx]);
-                }}
-            }}
-        }} else {{
+                    Plotly.restyle(gd, {x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}, [idx]);
+                }
+                try { Plotly.relayout(gd, {"title.text": `AA-triplet network: target ${nodeId}`}); } catch(e) {}
+                try { if (titleSpan) titleSpan.textContent = `AA-triplet network: target ${nodeId}`; } catch(e) {}
+                // update dynamic target trace when locking
+                try {
+                    const c = payload.coords[nodeId];
+                    const cnt = payload.counts && payload.counts[nodeId] ? payload.counts[nodeId] : 0;
+                    const sz = 10 + (Math.log(1 + cnt) * 2);
+                    Plotly.restyle(gd, {x: [[c[0]]], y: [[c[1]]], z: [[c[2]]], text: [[`<b>${nodeId}</b><br>count: ${cnt}`]], 'marker.size': [[sz]]}, [payload.target_trace_idx]);
+                } catch(e) { console.warn('Could not update target trace on click', e); }
+            }
+        } else {
             lockedNode = null;
-            for(let d=0; d<3; d++){{
+            for(let d=0; d<3; d++){
                 const idx = payload.hover_trace_idxs[d];
-                Plotly.restyle(gd, {{x: [[]], y: [[]], z: [[]]}}, [idx]);
-            }}
-        }}
-    }});
+                Plotly.restyle(gd, {x: [[]], y: [[]], z: [[]]}, [idx]);
+            }
+            try { Plotly.relayout(gd, {"title.text": originalTitle}); } catch(e) {}
+            try { if (titleSpan) titleSpan.textContent = originalTitle; } catch(e) {}
+            // clear dynamic target trace
+            try { Plotly.restyle(gd, {x: [[]], y: [[]], z: [[]], text: [[]]}, [payload.target_trace_idx]); } catch(e) {}
+        }
+    });
 
-    gd.on('plotly_unhover', function(evt){{
+    gd.on('plotly_unhover', function(evt){
         hoverNode = null;
         if(lockedNode) return;
-        for(let d=0; d<3; d++){{
+        for(let d=0; d<3; d++){
             const idx = payload.hover_trace_idxs[d];
-            Plotly.restyle(gd, {{x: [[]], y: [[]], z: [[]]}}, [idx]);
-        }}
-    }});
-}});
+            Plotly.restyle(gd, {x: [[]], y: [[]], z: [[]]} , [idx]);
+        }
+    });
+});
 </script>
 """
         with open(out_html, 'w', encoding='utf-8') as fh:
@@ -356,7 +495,8 @@ def main():
     # build counts + color map from network node metadata
     counts_map = {k: {'count': aa_net.nodes[k].get('count', 0), 'color': aa_net.nodes[k].get('color', 0)} for k in nodes}
 
-    target = args.target if args.target else nodes[0]
+    # do not force a default target — let the page input control selection
+    target = args.target if args.target else None
     plot_aa_network(nodes, coords_map, letters, target=target, out_html=args.out, counts_map=counts_map)
 
 

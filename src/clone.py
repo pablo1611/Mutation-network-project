@@ -2,7 +2,8 @@
 from src.codon_mapper import CodonMapper
 
 class Clone:
-    def __init__(self, seq_id=None, ai=None, sample_=None, subject_=None, clone_id=None, function=None, copy_nu=None, cdr3_aa=None, sequence=None, germline=None, ab_target=None, time_po=None):
+    def __init__(self, seq_id=None, ai=None, sample_=None, subject_=None, clone_id=None, function=None, copy_nu=None, cdr3_aa=None, sequence=None, germline=None, **extra_fields):
+        # First 10 stable attributes (always present in this order)
         self.seq_id = seq_id
         self.ai = ai
         self.sample_ = sample_
@@ -13,8 +14,13 @@ class Clone:
         self.cdr3_aa = cdr3_aa
         self.sequence = sequence
         self.germline = germline
-        self.ab_target = ab_target
-        self.time_po = time_po
+
+        # Dynamic attributes from dataset (anything after the first 10)
+        self.extra_fields = {}
+        for k, v in (extra_fields or {}).items():
+            setattr(self, k, v)
+            self.extra_fields[k] = v
+
         self.nines = []  # List to store extracted nonuplets (nines)
         self.nine_aa_triplets = []  # List to store (index, translated amino acid triplet or None)
 
@@ -44,8 +50,12 @@ class Clone:
                 self.nine_aa_triplets.append((idx, aa_triplet))
 
     def __repr__(self):
-        return (
+        base = (
             f"Clone(seq_id={self.seq_id}, ai={self.ai}, sample_={self.sample_}, subject_={self.subject_}, "
             f"clone_id={self.clone_id}, function={self.function}, copy_nu={self.copy_nu}, cdr3_aa={self.cdr3_aa}, "
-            f"sequence={self.sequence}, germline={self.germline}, ab_target={self.ab_target}, time_po={self.time_po})"
+            f"sequence={self.sequence}, germline={self.germline}"
         )
+        if self.extra_fields:
+            extras = ", ".join(f"{k}={v!r}" for k, v in self.extra_fields.items())
+            return base + ", " + extras + ")"
+        return base + ")"
