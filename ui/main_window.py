@@ -3,6 +3,10 @@ from tkinter import filedialog, messagebox
 from src.sequence_processor import SequenceProcessor
 import json
 import os
+import subprocess
+import sys
+import tempfile
+import webbrowser
 
 # Example imports from your logic layer
 from src.generate_triplets import generate_triplets
@@ -54,9 +58,17 @@ class AntibodySequenceLoaderApp(ctk.CTk):
         self.label_source = ctk.CTkLabel(self.metadata_frame, text="Sample Source: –")
         self.label_source.pack(anchor="w", padx=20)
 
+        # Search controls (visible row under metadata)
+        self.search_frame = ctk.CTkFrame(self)
+        self.search_frame.pack(pady=(8, 6), fill="x", padx=20)
+        self.search_entry = ctk.CTkEntry(self.search_frame, placeholder_text="Triplet (e.g. ARN)")
+        self.search_entry.pack(side="left", padx=(8, 6))
+        self.btn_search = ctk.CTkButton(self.search_frame, text="Search Triplet", command=self.search_triplet)
+        self.btn_search.pack(side="left", padx=6)
+
         # Status label
         self.status_label = ctk.CTkLabel(self, text="Waiting for dataset upload...", text_color="#555")
-        self.status_label.pack(pady=(15, 10))
+        self.status_label.pack(pady=(10, 10))
 
         # Buttons
         self.frame_buttons = ctk.CTkFrame(self)
@@ -66,6 +78,7 @@ class AntibodySequenceLoaderApp(ctk.CTk):
         self.btn_clear.grid(row=0, column=0, padx=10)
         self.btn_next = ctk.CTkButton(self.frame_buttons, text="Next", command=self.process_next)
         self.btn_next.grid(row=0, column=1, padx=10)
+        
 
     def browse_file(self):
         file_path = filedialog.askopenfilename(
@@ -137,6 +150,33 @@ class AntibodySequenceLoaderApp(ctk.CTk):
             )
             self.btn_next.configure(state="disabled")
             self.extraction_success = False
+
+    def search_triplet(self):
+        """Run the plot script to focus on a given triplet and open the produced HTML."""
+        trip = (self.search_entry.get() or '').strip().upper()
+        if not trip:
+            messagebox.showerror("Input required", "Please enter an AA triplet (e.g. ARN).")
+            return
+        if not self.file_path:
+            messagebox.showerror("No dataset", "Please load a clones CSV first using Browse.")
+            return
+
+        try:
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.html')
+            tmp_path = tmp.name
+            tmp.close()
+            # Call the plotting script with current Python executable
+            cmd = [sys.executable, os.path.join(os.getcwd(), 'scripts', 'plot_aa3_plotly.py'), '--csv', self.file_path, '--target', trip, '--out', tmp_path]
+            proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
+            if proc.returncode != 0:
+                msg = proc.stderr or proc.stdout or 'Unknown error'
+                messagebox.showerror('Plot Error', f'Plot generation failed:\n{msg}')
+                return
+            # open in default browser
+            webbrowser.open('file://' + tmp_path)
+            messagebox.showinfo('Plot Generated', f'Opened plot focused on {trip} in your browser.')
+        except Exception as e:
+            messagebox.showerror('Error', f'Could not generate plot: {e}')
 
 
  
