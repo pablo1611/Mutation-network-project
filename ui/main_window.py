@@ -3,6 +3,9 @@ from tkinter import filedialog, messagebox
 import os
 import subprocess
 import sys
+import threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import socket
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -18,6 +21,36 @@ from scripts.plot_aa3_plotly import plot_from_aa_network
 
 class AntibodySequenceLoaderApp(ctk.CTk):
     def __init__(self):
+        # Start a persistent local HTTP server to serve generated plot HTML files.
+        # This avoids starting per-plot servers and makes the behavior identical
+        # to running `app.py` from source where Plotly uses a localhost URL.
+        try:
+            serve_dir = os.getcwd()
+            class _Handler(SimpleHTTPRequestHandler):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, directory=serve_dir, **kwargs)
+
+            # find a free port and start server in background
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+                _s.bind(('127.0.0.1', 0))
+                _port = _s.getsockname()[1]
+
+            try:
+                httpd = ThreadingHTTPServer(('127.0.0.1', _port), _Handler)
+                def _serve():
+                    try:
+                        httpd.serve_forever()
+                    except Exception:
+                        pass
+                t = threading.Thread(target=_serve, daemon=True)
+                t.start()
+                # expose the server port to other modules via env var
+                os.environ['PLOT_SERVER_PORT'] = str(_port)
+            except Exception:
+                # if server fails, don't block app startup
+                pass
+        except Exception:
+            pass
         super().__init__()
 
         # Window config
