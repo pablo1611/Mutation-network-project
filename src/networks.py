@@ -369,14 +369,16 @@ def compute_network_distance(network1: KmerNetwork, network2: KmerNetwork) -> fl
     Returns the average R across all kmers present in at least one network.
     """
     all_kmers = set(network1.nodes.keys()) | set(network2.nodes.keys())
-    if not all_kmers or set(network1.nodes.keys()) == set(network2.nodes.keys()):
-        return 0.0  # no kmers or identical kmers, distance 0
+    if not all_kmers:
+        return 0.0  # no kmers, distance 0
 
     total_r = 0.0
     count = 0
     for kmer in all_kmers:
         clones1 = network1.nodes.get(kmer, {}).get('clones', set())
         clones2 = network2.nodes.get(kmer, {}).get('clones', set())
+        if clones1 == clones2:
+            continue  # identical clone sets, skip
         A = len(clones1)
         B = len(clones2)
         ab = len(clones1 & clones2)
