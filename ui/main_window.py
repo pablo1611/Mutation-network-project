@@ -329,7 +329,6 @@ class AntibodySequenceLoaderApp(ctk.CTk):
             self.analyze_dataset(0)
             self.analyze_dataset(1)
             self.compare_datasets()  # Retry after analysis
-            messagebox.showerror("Error", "Failed to build networks for comparison.")
 
     def compare_areas(self):
         """Compare between R1 and R2 areas in the uploaded dataset"""
