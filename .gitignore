@@ -11,3 +11,4 @@ venv/
 dist/
 build/
 *.egg-info/
+output/

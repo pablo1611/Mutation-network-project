@@ -7,8 +7,6 @@ import pandas as pd
 
 from src.codon_mapper import CodonMapper
 
-# Keep a module-level CodonMapper so it's available when needed but not
-# attached to the NetworksManager instance returned to callers.
 _CODON_MAPPER: Optional[CodonMapper] = None
 
 
@@ -47,7 +45,6 @@ class KmerNetwork:
         if self.store_positions and pos is not None:
             node['positions'][clone_id].append(pos)
         # mark nucleotide 9-mers that contain stop codons with a color flag
-        # mark nucleotide 9-mers that contain stop codons with a color flag
         if self.k == 9:
             # ensure uppercase
             kmer_up = kmer.upper()
@@ -68,8 +65,8 @@ class KmerNetwork:
                     node['color'] = 1
 
     def add_sequence(self, sequence, clone_id):
-        """Add all k-mers from sequence (sliding window) to the network.
-
+        """
+        Add all k-mers from sequence (sliding window) to the network.
         If positions are enabled, records positions, otherwise only updates counts and clone sets.
         """
         if not sequence or len(sequence) < self.k:
@@ -168,6 +165,122 @@ class KmerNetwork:
             }
             rows.append(row)
         return rows
+
+    def normalize_nodes(self):
+        """Normalize node frequencies by dividing each node's count by the total sum of all counts.
+        
+        Stores the normalized value as 'normalized_freq' field on each node.
+        This represents the proportion of the total clone population containing this k-mer.
+        """
+        total_count = sum(node.get('count', 0) for node in self.nodes.values())
+        if total_count == 0:
+            return
+        
+        for kmer, node in self.nodes.items():
+            count = node.get('count', 0)
+            node['normalized_freq'] = count / total_count
+            # Initialize threshold flag as True (included by default)
+            node['above_threshold'] = True
+
+    def apply_node_threshold(self, threshold: float):
+        """Apply frequency threshold to nodes.
+        
+        Nodes with normalized_freq below threshold will have 'above_threshold' = False.
+        This is logical filtering - nodes remain in the structure but are marked as filtered.
+        
+        Args:
+            threshold: minimum normalized frequency (0.0 to 1.0)
+        """
+        for kmer, node in self.nodes.items():
+            normalized_freq = node.get('normalized_freq', 0.0)
+            node['above_threshold'] = normalized_freq >= threshold
+
+    def compute_edge_probabilities(self):
+        """Compute edge probabilities for the network.
+        
+        For each node i, computes the probability that it originated from each neighbor j as:
+        P(j -> i) = frequency(j) / sum of frequencies of all neighbors of i
+        
+        Stores edge probabilities in 'edges' dict where:
+        edges[node_i][node_j] = probability that node_i came from node_j
+        
+        This creates a directed, weighted graph.
+        """
+        # Initialize edges structure if not present
+        if not hasattr(self, 'edges') or self.edges is None:
+            self.edges = {}
+        
+        # For k=3 (triplets), neighbors differ by exactly one position
+        for node_i, node_data_i in self.nodes.items():
+            if len(node_i) != self.k:
+                continue
+                
+            # Find all neighbors (differ by exactly one character)
+            neighbors = []
+            for node_j, node_data_j in self.nodes.items():
+                if node_i == node_j:
+                    continue
+                # Count differences
+                diffs = sum(1 for a, b in zip(node_i, node_j) if a != b)
+                if diffs == 1:
+                    neighbors.append((node_j, node_data_j.get('count', 0)))
+            
+            # Compute probabilities
+            if neighbors:
+                total_neighbor_freq = sum(freq for _, freq in neighbors)
+                if total_neighbor_freq > 0:
+                    self.edges[node_i] = {}
+                    for neighbor_id, neighbor_freq in neighbors:
+                        probability = neighbor_freq / total_neighbor_freq
+                        self.edges[node_i][neighbor_id] = {
+                            'probability': probability,
+                            'above_threshold': True  # Default to True, will be updated by threshold
+                        }
+
+    def apply_edge_threshold(self, threshold: float):
+        """Apply probability threshold to edges.
+        
+        Edges with probability below threshold will have 'above_threshold' = False.
+        This is logical filtering - edges remain but are marked as filtered.
+        
+        Args:
+            threshold: minimum edge probability (0.0 to 1.0)
+        """
+        if not hasattr(self, 'edges') or self.edges is None:
+            return
+            
+        for node_i, edges_dict in self.edges.items():
+            for node_j, edge_data in edges_dict.items():
+                probability = edge_data.get('probability', 0.0)
+                edge_data['above_threshold'] = probability >= threshold
+
+    def get_frequency_distribution(self):
+        """Get distribution of node frequencies for histogram.
+        
+        Returns:
+            dict: {'frequencies': list of counts, 'normalized_frequencies': list of normalized values}
+        """
+        frequencies = [node.get('count', 0) for node in self.nodes.values()]
+        normalized = [node.get('normalized_freq', 0.0) for node in self.nodes.values()]
+        return {
+            'frequencies': frequencies,
+            'normalized_frequencies': normalized
+        }
+
+    def get_edge_probability_distribution(self):
+        """Get distribution of edge probabilities for histogram.
+        
+        Returns:
+            list: list of all edge probabilities
+        """
+        if not hasattr(self, 'edges') or self.edges is None:
+            return []
+        
+        probabilities = []
+        for edges_dict in self.edges.values():
+            for edge_data in edges_dict.values():
+                probabilities.append(edge_data.get('probability', 0.0))
+        return probabilities
 
 
 class NetworksManager:
@@ -389,3 +502,145 @@ def compute_network_distance(network1: KmerNetwork, network2: KmerNetwork) -> fl
         total_r += r
         count += 1
     return total_r / count if count > 0 else 0.0
+
+
+def compute_degree_distribution(network: KmerNetwork) -> dict:
+    """Compute degree distribution for the network.
+    
+    Returns a dictionary with degree statistics:
+    - in_degree: dict mapping node -> number of incoming edges
+    - out_degree: dict mapping node -> number of outgoing edges
+    - degree_dist: distribution of degrees
+    """
+    if not hasattr(network, 'edges') or network.edges is None:
+        network.compute_edge_probabilities()
+    
+    in_degree = {}
+    out_degree = {}
+    
+    # Initialize all nodes with 0 degree
+    for node in network.nodes.keys():
+        in_degree[node] = 0
+        out_degree[node] = 0
+    
+    # Count edges (only those above threshold)
+    for node_i, edges_dict in network.edges.items():
+        for node_j, edge_data in edges_dict.items():
+            if edge_data.get('above_threshold', True):
+                out_degree[node_i] += 1
+                in_degree[node_j] += 1
+    
+    # Compute distribution
+    all_degrees = list(in_degree.values()) + list(out_degree.values())
+    degree_counts = {}
+    for deg in all_degrees:
+        degree_counts[deg] = degree_counts.get(deg, 0) + 1
+    
+    return {
+        'in_degree': in_degree,
+        'out_degree': out_degree,
+        'degree_distribution': degree_counts,
+        'avg_in_degree': sum(in_degree.values()) / len(in_degree) if in_degree else 0,
+        'avg_out_degree': sum(out_degree.values()) / len(out_degree) if out_degree else 0
+    }
+
+
+def compute_degree_centrality(network: KmerNetwork) -> dict:
+    """Compute degree centrality for all nodes.
+    
+    Degree centrality is the fraction of nodes that a node is connected to.
+    For directed graphs, we compute both in-degree and out-degree centrality.
+    
+    Returns:
+        dict: {
+            'in_centrality': dict mapping node -> in-degree centrality,
+            'out_centrality': dict mapping node -> out-degree centrality,
+            'top_central_nodes': list of (node, centrality) tuples sorted by total centrality
+        }
+    """
+    degree_stats = compute_degree_distribution(network)
+    n = len(network.nodes)
+    
+    if n <= 1:
+        return {
+            'in_centrality': {},
+            'out_centrality': {},
+            'top_central_nodes': []
+        }
+    
+    # Normalize by (n-1) to get centrality scores
+    in_centrality = {node: deg / (n - 1) for node, deg in degree_stats['in_degree'].items()}
+    out_centrality = {node: deg / (n - 1) for node, deg in degree_stats['out_degree'].items()}
+    
+    # Compute total centrality (in + out)
+    total_centrality = {node: in_centrality[node] + out_centrality[node] for node in network.nodes.keys()}
+    
+    # Get top central nodes
+    top_nodes = sorted(total_centrality.items(), key=lambda x: x[1], reverse=True)[:20]
+    
+    return {
+        'in_centrality': in_centrality,
+        'out_centrality': out_centrality,
+        'top_central_nodes': top_nodes
+    }
+
+
+def compare_networks(network1: KmerNetwork, network2: KmerNetwork) -> dict:
+    """Compare two networks using multiple metrics.
+    
+    Returns a comprehensive comparison including:
+    - Basic statistics (node count, edge count)
+    - Degree distributions
+    - Centrality measures
+    - Structural distance
+    
+    Args:
+        network1: First KmerNetwork
+        network2: Second KmerNetwork
+    
+    Returns:
+        dict: Comprehensive comparison metrics
+    """
+    # Ensure both networks have edge computations
+    if not hasattr(network1, 'edges') or network1.edges is None:
+        network1.compute_edge_probabilities()
+    if not hasattr(network2, 'edges') or network2.edges is None:
+        network2.compute_edge_probabilities()
+    
+    # Basic statistics
+    stats1 = {
+        'node_count': len(network1.nodes),
+        'edge_count': sum(len(edges) for edges in network1.edges.values()),
+        'total_frequency': sum(node.get('count', 0) for node in network1.nodes.values())
+    }
+    stats2 = {
+        'node_count': len(network2.nodes),
+        'edge_count': sum(len(edges) for edges in network2.edges.values()),
+        'total_frequency': sum(node.get('count', 0) for node in network2.nodes.values())
+    }
+    
+    # Degree distributions
+    degree_dist1 = compute_degree_distribution(network1)
+    degree_dist2 = compute_degree_distribution(network2)
+    
+    # Centrality measures
+    centrality1 = compute_degree_centrality(network1)
+    centrality2 = compute_degree_centrality(network2)
+    
+    # Structural distance
+    distance = compute_network_distance(network1, network2)
+    
+    return {
+        'network1': {
+            'stats': stats1,
+            'degree': degree_dist1,
+            'centrality': centrality1
+        },
+        'network2': {
+            'stats': stats2,
+            'degree': degree_dist2,
+            'centrality': centrality2
+        },
+        'distance': distance
+    }
+

@@ -10,6 +10,7 @@ A Python-based application for analyzing antibody sequence mutation networks. Th
 - **GUI Interface**: CustomTkinter-based app for easy dataset upload, analysis, and comparison (supports up to 2 datasets).
 - **Comparison Tools**: Compare networks between datasets or within a dataset (e.g., R1 vs. R2 regions).
 - **Export Functionality**: Save triplet occurrence data as CSV files and open them automatically.
+- **Automatic Edge Export**: Every analysis automatically saves network edges with their calculated probabilities (weights) to CSV files for further analysis.
 - **Cross-Platform**: Works on macOS and Windows; package as native executables using PyInstaller.
 
 
@@ -39,6 +40,49 @@ A Python-based application for analyzing antibody sequence mutation networks. Th
    ```
 
 ## Usage
+
+### Running the Application
+```bash
+python ui/main_window.py
+```
+
+The GUI allows you to:
+1. **Upload Dataset(s)**: Select CSV files containing antibody clone data
+2. **View Metadata**: See extracted information about subjects, samples, and time points
+3. **Execute Triplets**: Generate and export triplet occurrence data
+4. **Analyze Network**: Visualize amino acid triplet networks with interactive plots
+5. **Compare**: Analyze differences between datasets or regions (R1 vs R2)
+
+### Output Files
+
+All output files are saved to the `output/` directory:
+
+- **Triplet Data**: `triplets_dataset_1.csv`, `triplets_dataset_2.csv` - K-mer occurrence data
+- **Network Plots**: `aa3_network_dataset_1.html`, `aa3_network_dataset_2.html` - Interactive visualizations
+- **Edge Datasets** (automatic): CSV files containing all network edges with calculated probabilities:
+  - `edges_dataset_1.csv` - Edges from single dataset analysis
+  - `edges_dataset_2.csv` - Edges from second dataset analysis
+  - `edges_dataset1_comparison.csv`, `edges_dataset2_comparison.csv` - Edges from dataset comparison
+  - `edges_region1_comparison.csv`, `edges_region2_comparison.csv` - Edges from region comparison
+
+### Edge Dataset Structure
+
+Each edge CSV file contains:
+- **source_node** & **target_node**: Connected amino acid triplets
+- **weight** / **probability**: Calculated edge probability (0.0 to 1.0)
+- **above_threshold**: Whether edge passes the threshold filter
+- **dataset**: Dataset or region identifier
+- **analysis_type**: Type of analysis performed
+- **timestamp**: When the analysis was run
+
+Example usage with pandas:
+```python
+import pandas as pd
+edges = pd.read_csv('output/edges_dataset_1.csv')
+top_edges = edges.nlargest(10, 'weight')  # Get top 10 strongest connections
+```
+
+For detailed documentation on the edge dataset feature, see [EDGES_DATASET_DOCUMENTATION.md](EDGES_DATASET_DOCUMENTATION.md).
 
 ## Building the Application
 
