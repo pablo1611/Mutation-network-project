@@ -21,6 +21,27 @@ from scripts.plot_aa3_plotly import plot_from_aa_network
 # from src.generate_triplets import generate_triplets  # Not used
 # from src.generate_nonuplets import generate_nonuplets  # Not used
 
+def get_output_dir():
+    """Get a writable output directory. 
+    
+    For bundled apps, use the user's Documents folder.
+    For development, use the project's output folder.
+    
+    Returns:
+        str: Path to the output directory
+    """
+    # Check if running as a bundled app (PyInstaller sets this)
+    if getattr(sys, 'frozen', False):
+        # Running as bundled app - use Documents folder
+        home = os.path.expanduser("~")
+        out_dir = os.path.join(home, "Documents", "AntibodySequenceLoader_Output")
+    else:
+        # Running in development - use project's output folder
+        out_dir = os.path.join(os.getcwd(), "output")
+    
+    os.makedirs(out_dir, exist_ok=True)
+    return out_dir
+
 def save_edges_to_csv(network, output_path, dataset_name="", analysis_type=""):
     """Save all edges with their probabilities (weights) to a CSV file.
     
@@ -391,8 +412,7 @@ class AntibodySequenceLoaderApp(ctk.CTk):
                 node_thresh = self.datasets[index]['thresholds']['node_threshold']
                 edge_thresh = self.datasets[index]['thresholds']['edge_threshold']
                 print(f"Debug: Using thresholds - node: {node_thresh}, edge: {edge_thresh}")
-                out_dir = os.path.join(os.getcwd(), "output")
-                os.makedirs(out_dir, exist_ok=True)
+                out_dir = get_output_dir()
                 out_html = os.path.join(out_dir, f"aa3_network_dataset_{index+1}.html")
                 
                 # Get the network and apply thresholds
@@ -449,14 +469,12 @@ class AntibodySequenceLoaderApp(ctk.CTk):
             self.analyze_dataset(reigon_index)
         # save the triplet_df
         if reigon_index == 0 and self.triplet_df_r1 is not None:
-            out_dir = os.path.join(os.getcwd(), "output")
-            os.makedirs(out_dir, exist_ok=True)
+            out_dir = get_output_dir()
             out_path = os.path.join(out_dir, f"triplets_dataset_1.csv")
             self.triplet_df_r1.to_csv(out_path, index=False)
             subprocess.run(['open', out_path])
         elif reigon_index == 1 and self.triplet_df_r2 is not None:
-            out_dir = os.path.join(os.getcwd(), "output")
-            os.makedirs(out_dir, exist_ok=True)
+            out_dir = get_output_dir()
             out_path = os.path.join(out_dir, f"triplets_dataset_2.csv")
             self.triplet_df_r2.to_csv(out_path, index=False)
             subprocess.run(['open', out_path])
@@ -489,8 +507,7 @@ class AntibodySequenceLoaderApp(ctk.CTk):
                 distance = compute_network_distance(aa_net_r1, aa_net_r2)
                 
                 # Save edges for both datasets
-                out_dir = os.path.join(os.getcwd(), "output")
-                os.makedirs(out_dir, exist_ok=True)
+                out_dir = get_output_dir()
                 
                 edges_csv_r1 = os.path.join(out_dir, "edges_dataset1_comparison.csv")
                 save_edges_to_csv(
@@ -511,8 +528,7 @@ class AntibodySequenceLoaderApp(ctk.CTk):
                 summary = f"Dataset Comparison Results:\n\n"
                 summary += f"Dataset 1: {len(aa_net_r1.nodes)} nodes\n"
                 summary += f"Dataset 2: {len(aa_net_r2.nodes)} nodes\n\n"
-                summary += f"Network Distance: {distance:.6f}\n\n"
-                summary += f"\nEdges saved to:\n- {edges_csv_r1}\n- {edges_csv_r2}"
+                summary += f"Network Distance: {distance:.6f}"
                 
                 messagebox.showinfo("Comparison Result", summary)
 
@@ -554,8 +570,7 @@ class AntibodySequenceLoaderApp(ctk.CTk):
             distance = compute_network_distance(r1_net, r2_net)
             
             # Save edges for both regions
-            out_dir = os.path.join(os.getcwd(), "output")
-            os.makedirs(out_dir, exist_ok=True)
+            out_dir = get_output_dir()
             
             edges_csv_r1 = os.path.join(out_dir, "edges_region1_comparison.csv")
             save_edges_to_csv(
@@ -576,8 +591,7 @@ class AntibodySequenceLoaderApp(ctk.CTk):
             summary = f"Region Comparison Results (R1 vs R2):\n\n"
             summary += f"Region 1: {len(r1_net.nodes)} nodes\n"
             summary += f"Region 2: {len(r2_net.nodes)} nodes\n\n"
-            summary += f"Network Distance: {distance:.6f}\n\n"
-            summary += f"\nEdges saved to:\n- {edges_csv_r1}\n- {edges_csv_r2}"
+            summary += f"Network Distance: {distance:.6f}"
             
             messagebox.showinfo("Compare Areas", summary)
 

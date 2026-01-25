@@ -1,0 +1,108 @@
+@startuml Antibody Sequence Loader - Sequence Diagram (Dataset Analysis)
+
+actor User
+participant "UI\n(AntibodySequenceLoaderApp)" as UI
+participant "load_clones" as Loader
+participant "Clone" as Clone
+participant "CodonMapper" as Mapper
+participant "NetworkCollection" as NetCol
+participant "KmerNetwork" as Network
+participant "plot_aa3_plotly" as Plotter
+participant "save_edges_to_csv" as Saver
+participant "FileSystem" as FS
+
+== Data Loading ==
+User -> UI: Browse and select CSV file
+UI -> Loader: load_clones(csv_path)
+Loader -> FS: Read CSV file
+FS --> Loader: Raw data
+loop For each row
+    Loader -> Clone: Create Clone object
+    Clone --> Loader: Clone instance
+end
+Loader --> UI: Dictionary of clones
+UI -> UI: Display metadata preview
+
+== Analysis Process ==
+User -> UI: Click "Analyze Dataset"
+UI -> UI: Get threshold values
+
+loop For each clone
+    UI -> Clone: extract_nines()
+    Clone -> Clone: Sliding window extraction
+    Clone --> UI: List of nonuplets
+    
+    UI -> Clone: translate_nines()
+    Clone -> Mapper: translate_nine_mer(nine)
+    Mapper --> Clone: AA triplet
+    Clone --> UI: Translated triplets
+end
+
+== Network Creation ==
+UI -> NetCol: Create NetworkCollection
+NetCol -> Network: Create aa_network (k=3)
+NetCol -> Network: Create nt_network (k=9)
+NetCol --> UI: NetworkCollection
+
+loop For each clone's triplets
+    UI -> Network: add_kmer(triplet, clone_id)
+    Network -> Network: Update nodes dict
+end
+
+== Network Processing ==
+UI -> Network: normalize_nodes()
+Network -> Network: Calculate frequencies
+Network --> UI: Normalized
+
+UI -> Network: apply_node_threshold(threshold)
+Network -> Network: Mark nodes above/below threshold
+Network --> UI: Threshold applied
+
+UI -> Network: compute_edge_probabilities()
+Network -> Network: Calculate co-occurrences
+Network -> Network: Compute probabilities
+Network --> UI: Edges created
+
+UI -> Network: apply_edge_threshold(threshold)
+Network -> Network: Filter edges by probability
+Network --> UI: Edge threshold applied
+
+== Export & Visualization ==
+UI -> Saver: save_edges_to_csv(network, path)
+Saver -> FS: Write CSV file
+FS --> Saver: Success
+Saver --> UI: CSV path
+
+UI -> Plotter: plot_from_aa_network(network, output_path)
+Plotter -> Network: Get nodes and edges
+Network --> Plotter: Network data
+Plotter -> Plotter: Create Plotly figure
+Plotter -> FS: Save HTML file
+FS --> Plotter: Success
+Plotter --> UI: HTML path
+
+UI -> FS: Open HTML in browser
+FS --> User: Interactive visualization
+
+== Network Comparison (Optional) ==
+User -> UI: Click "Compare Datasets"
+UI -> UI: Get network1 and network2
+
+UI -> Network: compute_network_distance(net1, net2)
+Network -> Network: Calculate Jaccard distance
+Network -> Network: Compare node frequencies
+Network --> UI: Distance metric
+
+UI -> Saver: save_edges_to_csv(net1, path1)
+UI -> Saver: save_edges_to_csv(net2, path2)
+Saver --> UI: CSV paths
+
+UI --> User: Display comparison results
+note right
+  Shows:
+  - Number of nodes in each network
+  - Network distance metric
+  - Edge CSV locations
+end note
+
+@enduml

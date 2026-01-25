@@ -1,0 +1,130 @@
+@startuml Antibody Sequence Loader - Class Diagram
+
+' Main Classes
+class Clone {
+  - seq_id: str
+  - ai: int
+  - sample_: str
+  - subject_: str
+  - clone_id: int
+  - function: str
+  - copy_nu: int
+  - cdr3_aa: str
+  - sequence: str
+  - germline: str
+  - extra_fields: dict
+  - nines: list[(int, str)]
+  - nine_aa_triplets: list[(int, str)]
+  --
+  + extract_nines(): void
+  + translate_nines(): void
+}
+
+class CodonMapper {
+  - amino_acid_triplets: dict
+  - codon_table: dict
+  --
+  + translate_nine_mer(nine_mer: str): str
+  + map_sequence(dna_sequence: str): Generator
+}
+
+class KmerNetwork {
+  - k: int
+  - store_positions: bool
+  - nodes: dict
+  - edges: dict
+  --
+  + add_kmer(kmer: str, clone_id: int, pos: int): void
+  + add_sequence(sequence: str, clone_id: int): void
+  + normalize_nodes(): void
+  + apply_node_threshold(threshold: float): void
+  + compute_edge_probabilities(): void
+  + apply_edge_threshold(threshold: float): void
+  + get_frequency_distribution(): dict
+  + to_serializable(): dict
+}
+
+class NetworkCollection {
+  - aa_network: KmerNetwork
+  - nt_network: KmerNetwork
+  - aa_network_region: dict
+  --
+  + get_aa_network(): KmerNetwork
+  + get_nt_network(): KmerNetwork
+}
+
+class AntibodySequenceLoaderApp {
+  - datasets: list
+  - dataset_frames: list
+  - clones_r1: dict
+  - clones_r2: dict
+  - networks_r1: NetworkCollection
+  - networks_r2: NetworkCollection
+  - triplet_df_r1: DataFrame
+  - triplet_df_r2: DataFrame
+  --
+  + browse_file(index: int): void
+  + analyze_dataset(index: int): void
+  + execute_triplets(region_index: int): void
+  + compare_datasets(): void
+  + compare_areas(): void
+  + update_node_threshold(value: float, label: Widget, index: int): void
+  + update_edge_threshold(value: float, label: Widget, index: int): void
+}
+
+' Relationships
+Clone --> CodonMapper : uses
+Clone *-- "1..*" nine : contains
+Clone *-- "1..*" nine_aa_triplets : contains
+
+KmerNetwork --> CodonMapper : optionally uses
+NetworkCollection *-- "1" aa_network
+NetworkCollection *-- "1" nt_network
+NetworkCollection *-- "2" aa_network_region
+
+AntibodySequenceLoaderApp --> Clone : processes
+AntibodySequenceLoaderApp --> NetworkCollection : creates/manages
+AntibodySequenceLoaderApp --> KmerNetwork : analyzes
+
+' Utility Functions
+package "Utility Functions" {
+  class LoadClones <<function>> {
+    + load_clones(csv_file: str): dict
+  }
+  
+  class BuildTripletDF <<function>> {
+    + build_triplet_df(clones: dict): DataFrame
+  }
+  
+  class ComputeDistance <<function>> {
+    + compute_network_distance(net1: KmerNetwork, net2: KmerNetwork): float
+  }
+  
+  class SaveEdges <<function>> {
+    + save_edges_to_csv(network: KmerNetwork, output_path: str, ...): str
+  }
+  
+  class PlotNetwork <<function>> {
+    + plot_from_aa_network(network: KmerNetwork, ...): str
+  }
+}
+
+AntibodySequenceLoaderApp ..> LoadClones : uses
+AntibodySequenceLoaderApp ..> BuildTripletDF : uses
+AntibodySequenceLoaderApp ..> ComputeDistance : uses
+AntibodySequenceLoaderApp ..> SaveEdges : uses
+AntibodySequenceLoaderApp ..> PlotNetwork : uses
+
+note right of KmerNetwork
+  Core data structure for 
+  storing k-mers (3-mers or 9-mers)
+  with frequency and co-occurrence data
+end note
+
+note right of Clone
+  Represents an antibody clone
+  with sequence data and methods
+  for k-mer extraction
+end note
+
+@enduml
