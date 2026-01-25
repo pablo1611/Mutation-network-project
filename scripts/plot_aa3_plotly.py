@@ -10,9 +10,6 @@ nodes as a faint point cloud and a highlighted "star" of neighbors for
 the chosen target node. Neighbor arcs are colored by which position
 (1/2/3) differs.
 
-Note: rendering all pairwise edges for 9,261 nodes is very heavy; this
-prototype intentionally renders only the node cloud and a focused star
-of neighbors for interactivity and quick validation.
 """
 import argparse
 import math
@@ -47,10 +44,32 @@ def build_coords_map(nodes: List[str]) -> Tuple[dict, List[str]]:
     return coords, letters
 
 
-def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], target: str = None, out_html: str = None, counts_map: dict = None):
-    all_x = [coords_map[n][0] for n in nodes]
-    all_y = [coords_map[n][1] for n in nodes]
-    all_z = [coords_map[n][2] for n in nodes]
+def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], target: str = None, out_html: str = None, counts_map: dict = None, aa_network=None, node_threshold: float = 0.0, edge_threshold: float = 0.0):
+    """Plot the AA network with optional filtering by thresholds.
+    
+    Args:
+        nodes: List of node IDs
+        coords_map: Mapping of node IDs to 3D coordinates
+        letters: Sorted alphabet of amino acids
+        target: Optional initial target node
+        out_html: Optional path to save HTML
+        counts_map: Mapping of node IDs to metadata (count, color)
+        aa_network: KmerNetwork instance (optional, for edge probability filtering)
+        node_threshold: Minimum normalized frequency for nodes (0.0 to 1.0)
+        edge_threshold: Minimum probability for edges (0.0 to 1.0)
+    """
+    # Filter nodes based on threshold
+    if aa_network:
+        filtered_nodes = [
+            n for n in nodes
+            if aa_network.nodes.get(n, {}).get('above_threshold', True)
+        ]
+    else:
+        filtered_nodes = nodes
+    
+    all_x = [coords_map[n][0] for n in filtered_nodes]
+    all_y = [coords_map[n][1] for n in filtered_nodes]
+    all_z = [coords_map[n][2] for n in filtered_nodes]
 
     fig = go.Figure()
 
@@ -58,11 +77,19 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
     hover_texts = []
     sizes = []
     node_colors = []
-    for n in nodes:
+    for n in filtered_nodes:
         meta = counts_map.get(n, {}) if counts_map else {}
         cnt = meta.get('count', 0) if isinstance(meta, dict) else meta
         is_stop = bool(meta.get('color')) if isinstance(meta, dict) else False
-        hover_texts.append(f"{n}<br>count: {cnt}")
+        
+        # Add normalized frequency to hover text if available
+        if aa_network:
+            node_data = aa_network.nodes.get(n, {})
+            norm_freq = node_data.get('normalized_freq', 0.0)
+            hover_texts.append(f"{n}<br>count: {cnt}<br>norm_freq: {norm_freq:.6f}")
+        else:
+            hover_texts.append(f"{n}<br>count: {cnt}")
+        
         # scale marker size slightly by log(count)
         try:
             sizes.append(max(2, math.log1p(cnt) * 3))
@@ -77,7 +104,9 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
         marker=dict(size=sizes, color=node_colors, opacity=0.9),
         name='All nodes', showlegend=False,
         hoverinfo='text',
-        text=hover_texts
+        text=hover_texts,
+        # store raw node id so JS can reliably identify the clicked node (one per point)
+        customdata=[[nid] for nid in filtered_nodes]
     ))
 
     # Do not force a server-side default target: let the user pick one on the page.
@@ -93,20 +122,30 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
         tx, ty, tz = coords_map[target]
         target_meta = counts_map.get(target, {}) if counts_map else {}
         target_count = target_meta.get('count', 0) if isinstance(target_meta, dict) else target_meta
+        
+        # Add normalized frequency to target display if available
+        if aa_network:
+            target_node_data = aa_network.nodes.get(target, {})
+            target_norm_freq = target_node_data.get('normalized_freq', 0.0)
+            target_text = f"<b>{target}</b><br>count: {target_count}<br>norm_freq: {target_norm_freq:.6f}"
+        else:
+            target_text = f"<b>{target}</b><br>count: {target_count}"
+        
         fig.add_trace(go.Scatter3d(
             x=[tx], y=[ty], z=[tz],
             mode='markers+text',
             marker=dict(size=10 + (math.log1p(target_count) * 2), color='black', symbol='diamond', line=dict(color='white', width=1)),
-            text=[f"<b>{target}</b><br>count: {target_count}"], textposition='top center',
+            text=[target_text], textposition='top center',
             name='Target', showlegend=False,
             hoverinfo='text'
         ))
 
-        nodes_set = set(nodes)
+        nodes_set = set(filtered_nodes)
         max_dim = max(len(letters) - 1, 1)
         offset_mag = max(3, max_dim * 0.2)
 
         # For each neighbor differing by one position, draw a curved arc with midpoint offset along axis
+        # Use edge probabilities if available and respect edge threshold
         for dim in range(3):
             for alt in letters:
                 if alt == target[dim]:
@@ -116,6 +155,22 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
                 neigh = ''.join(neigh)
                 if neigh not in nodes_set:
                     continue
+
+                # Check if edge passes threshold (if aa_network is provided)
+                if aa_network and hasattr(aa_network, 'edges') and aa_network.edges:
+                    # Check both directions
+                    # P(target | neigh) means "target came from neigh", stored in edges[target][neigh]
+                    outgoing_data = aa_network.edges.get(target, {}).get(neigh, {})  # target came from neigh
+                    # P(neigh | target) means "neigh came from target", stored in edges[neigh][target]  
+                    incoming_data = aa_network.edges.get(neigh, {}).get(target, {})  # neigh came from target
+                    
+                    # Skip if neither direction passes threshold
+                    if not (outgoing_data.get('above_threshold', False) or incoming_data.get('above_threshold', False)):
+                        continue
+                    
+                    edge_label = f"Edge: {target} ↔ {neigh}<br>Position {dim+1} differs"
+                else:
+                    edge_label = f"Edge: {target} ↔ {neigh}<br>Position {dim+1} differs"
 
                 sx, sy, sz = coords_map[target]
                 tx2, ty2, tz2 = coords_map[neigh]
@@ -133,12 +188,35 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
                     mode='lines',
                     line=dict(color=colors[dim], width=3),
                     hoverinfo='text',
-                    text=[f"{target} → {neigh} (pos {dim+1})"] * len(xs),
+                    text=[edge_label] * len(xs),
                     showlegend=False
                 ))
 
+    # Calculate total normalized frequency of filtered nodes
+    total_norm_freq = 0.0
+    total_edges = 0
+    if aa_network:
+        for n in filtered_nodes:
+            node_data = aa_network.nodes.get(n, {})
+            total_norm_freq += node_data.get('normalized_freq', 0.0)
+        
+        # Count edges passing threshold
+        if hasattr(aa_network, 'edges') and aa_network.edges:
+            for node_i, edges_dict in aa_network.edges.items():
+                if node_i not in filtered_nodes:
+                    continue
+                for node_j, edge_data in edges_dict.items():
+                    if node_j not in filtered_nodes:
+                        continue
+                    if edge_data.get('above_threshold', True):
+                        total_edges += 1
+
     fig.update_layout(
-        title="AA-triplet network",
+        title=dict(
+            text=f"AA-triplet network<br><sub>Displaying {len(filtered_nodes)} nodes, {total_edges} edges | Total norm_freq: {total_norm_freq:.4f} ({total_norm_freq*100:.2f}%)</sub>",
+            x=0.5,
+            xanchor='center'
+        ),
         scene=dict(aspectmode='cube'),
         # give more top margin so overlaid controls don't cover the title
         margin=dict(l=0, r=0, b=0, t=80),
@@ -157,7 +235,7 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
     # Add three empty placeholder traces for hovered-neighbor arcs (pos1,pos2,pos3).
     hover_trace_idxs = []
     for i, col in enumerate(colors):
-        tr = go.Scatter3d(x=[], y=[], z=[], mode='lines', line=dict(color=col, width=4), hoverinfo='none', name=f'neighbors-pos{i+1}')
+        tr = go.Scatter3d(x=[], y=[], z=[], mode='lines', line=dict(color=col, width=4), hoverinfo='text', text=[], name=f'neighbors-pos{i+1}')
         fig.add_trace(tr)
         hover_trace_idxs.append(len(fig.data) - 1)
 
@@ -178,11 +256,34 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
             'initial_target': target if target is not None else '',
             'hover_trace_idxs': hover_trace_idxs,
             'target_trace_idx': target_trace_idx,
-            'counts': {k: (counts_map.get(k, {}).get('count', 0) if isinstance(counts_map.get(k, {}), dict) else counts_map.get(k, 0)) for k in nodes}
+            'counts': {k: (counts_map.get(k, {}).get('count', 0) if isinstance(counts_map.get(k, {}), dict) else counts_map.get(k, 0)) for k in filtered_nodes},
+            'normalized_freqs': {},
+            'edge_probabilities': {},
+            # Only include nodes above threshold (keep JSON-serializable)
+            'filtered_nodes': list(filtered_nodes)
         }
-        # build neighbors mapping now
-        nodes_set = set(nodes)
-        for n in nodes:
+        
+        # Add normalized frequencies if available
+        if aa_network:
+            for n in filtered_nodes:
+                node_data = aa_network.nodes.get(n, {})
+                payload['normalized_freqs'][n] = node_data.get('normalized_freq', 0.0)
+            
+            # Add edge probabilities if available
+            if hasattr(aa_network, 'edges') and aa_network.edges:
+                for node_i, edges_dict in aa_network.edges.items():
+                    if node_i not in filtered_nodes:
+                        continue
+                    payload['edge_probabilities'][node_i] = {}
+                    for node_j, edge_data in edges_dict.items():
+                        if node_j not in filtered_nodes:
+                            continue
+                        if edge_data.get('above_threshold', True):
+                            payload['edge_probabilities'][node_i][node_j] = edge_data.get('probability', 0.0)
+        
+        # build neighbors mapping - include if EITHER direction passes threshold
+        nodes_set = set(filtered_nodes)
+        for n in filtered_nodes:
             neighs = []
             for d in range(3):
                 for alt in letters:
@@ -192,7 +293,20 @@ def plot_aa_network(nodes: List[str], coords_map: dict, letters: List[str], targ
                     m[d] = alt
                     m = ''.join(m)
                     if m in nodes_set:
-                        neighs.append({'id': m, 'pos': d})
+                        # Check if edge passes threshold in EITHER direction
+                        include_edge = False
+                        if aa_network and hasattr(aa_network, 'edges') and aa_network.edges:
+                            # P(n | m): n came from m, stored in edges[n][m]
+                            n_from_m_passes = aa_network.edges.get(n, {}).get(m, {}).get('above_threshold', False)
+                            # P(m | n): m came from n, stored in edges[m][n]
+                            m_from_n_passes = aa_network.edges.get(m, {}).get(n, {}).get('above_threshold', False)
+                            # Include if either direction passes
+                            include_edge = n_from_m_passes or m_from_n_passes
+                        else:
+                            include_edge = True
+                        
+                        if include_edge:
+                            neighs.append({'id': m, 'pos': d})
             payload['neighbors'][n] = neighs
 
         html_str = fig.to_html(include_plotlyjs='cdn', full_html=True)
@@ -220,6 +334,8 @@ function buildLineSegments(nodeId) {
     const offset_mag = Math.max(3, max_dim * 0.2);
     const steps = 30;
     const perDim = [[],[],[]];
+    
+    // Build edges for each neighbor
     for (const nb of neighs){
         const dim = nb.pos;
         const p0 = coords[nodeId];
@@ -231,17 +347,116 @@ function buildLineSegments(nodeId) {
         const xs = [], ys = [], zs = [];
         for (let i=0;i<pts.length;i++){ xs.push(pts[i][0]); ys.push(pts[i][1]); zs.push(pts[i][2]); }
         xs.push(null); ys.push(null); zs.push(null);
-        perDim[dim].push({x: xs, y: ys, z: zs});
+        
+        // Keep edge hover text minimal (no numeric probability/percent details)
+        let hoverText = `Edge: ${nodeId} ↔ ${nb.id}<br>Position ${dim+1} differs`;
+        
+        perDim[dim].push({x: xs, y: ys, z: zs, text: hoverText});
     }
-    const out = [ {x:[], y:[], z:[]}, {x:[], y:[], z:[]}, {x:[], y:[], z:[]} ];
+    const out = [ {x:[], y:[], z:[], text:[]}, {x:[], y:[], z:[], text:[]}, {x:[], y:[], z:[], text:[]} ];
     for (let d=0; d<3; d++){
-        for (const seg of perDim[d]){ out[d].x = out[d].x.concat(seg.x); out[d].y = out[d].y.concat(seg.y); out[d].z = out[d].z.concat(seg.z); }
+        for (const seg of perDim[d]){ 
+            out[d].x = out[d].x.concat(seg.x); 
+            out[d].y = out[d].y.concat(seg.y); 
+            out[d].z = out[d].z.concat(seg.z);
+            // Add hover text for each point in the segment
+            for (let i=0; i<seg.x.length; i++) {
+                out[d].text.push(seg.text);
+            }
+        }
     }
     return out;
 }
 
 document.addEventListener('DOMContentLoaded', function() {
     const gd = document.querySelectorAll('.plotly-graph-div')[0];
+
+    function extractNodeId(point) {
+        // Try customdata first (most reliable for clicks)
+        if (point && point.customdata) {
+            try {
+                const cd = point.customdata;
+                if (Array.isArray(cd) && cd.length > 0) {
+                    return String(cd[0]).trim().toUpperCase();
+                }
+                return String(cd).trim().toUpperCase();
+            } catch (e) {
+                console.warn('Error extracting customdata:', e);
+            }
+        }
+        // Fallback: parse from hover text
+        if (point && point.text) {
+            try {
+                const parts = String(point.text).split('<br>');
+                if (parts.length > 0) {
+                    return parts[0].replace(/<[^>]*>/g, '').trim().toUpperCase();
+                }
+            } catch (e) {
+                console.warn('Error parsing text:', e);
+            }
+        }
+        return null;
+    }
+
+    // Debug status panel - shows click events and locked node
+    const debugPanel = document.createElement('div');
+    debugPanel.id = 'debug-panel';
+    debugPanel.style.position = 'fixed';
+    debugPanel.style.top = '12px';
+    debugPanel.style.left = '12px';
+    debugPanel.style.width = '280px';
+    debugPanel.style.zIndex = '2147483647';
+    debugPanel.style.background = 'rgba(50,50,50,0.9)';
+    debugPanel.style.color = 'white';
+    debugPanel.style.borderRadius = '6px';
+    debugPanel.style.padding = '8px 10px';
+    debugPanel.style.fontFamily = 'monospace';
+    debugPanel.style.fontSize = '11px';
+    debugPanel.innerHTML = '<div style="font-weight:600; margin-bottom:4px;">DEBUG STATUS</div>' +
+                          '<div id="debug-status">Waiting for interaction...</div>';
+    try { document.body.appendChild(debugPanel); } catch(e) {}
+
+    function updateDebugStatus(msg) {
+        const el = document.getElementById('debug-status');
+        if (el) {
+            const timestamp = new Date().toLocaleTimeString();
+            el.innerHTML = `[${timestamp}] ${msg}`;
+        }
+    }
+
+    // Side panel: show outgoing edges + probabilities for clicked node
+    const edgePanel = document.createElement('div');
+    edgePanel.id = 'edge-panel';
+    edgePanel.style.position = 'fixed';
+    edgePanel.style.top = '64px';
+    edgePanel.style.right = '12px';
+    edgePanel.style.width = '340px';
+    edgePanel.style.maxHeight = '80vh';
+    edgePanel.style.overflow = 'auto';
+    edgePanel.style.zIndex = '2147483647';
+    edgePanel.style.background = 'rgba(255,255,255,0.95)';
+    edgePanel.style.borderRadius = '6px';
+    edgePanel.style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)';
+    edgePanel.style.padding = '8px 10px';
+    edgePanel.style.fontFamily = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+    edgePanel.style.fontSize = '12px';
+    edgePanel.innerHTML = '<div style="font-weight:600; margin-bottom:6px;">Outgoing edges</div>' +
+                          '<div id="edge-panel-body" style="white-space:pre-wrap;">Click a node to list outgoing edges.</div>';
+    try { document.body.appendChild(edgePanel); } catch(e) {}
+
+    function renderOutgoingEdges(nodeId) {
+        const body = document.getElementById('edge-panel-body');
+        if (!body) return;
+        const outgoing = (payload.edge_probabilities && payload.edge_probabilities[nodeId]) ? payload.edge_probabilities[nodeId] : null;
+        if (!outgoing || Object.keys(outgoing).length === 0) {
+            body.textContent = nodeId ? (nodeId + "\n(no outgoing edges above threshold)") : 'Click a node to list outgoing edges.';
+            return;
+        }
+        const rows = Object.entries(outgoing)
+            .sort((a, b) => (b[1] || 0) - (a[1] || 0))
+            .map(([dst, prob]) => `${nodeId} → ${dst}: ${Number(prob).toFixed(6)}`);
+        body.textContent = nodeId + "\n" + rows.join("\n");
+    }
     // add input + button to allow dynamic zoom to typed node id
     const controls = document.createElement('div');
     controls.style.padding = '6px';
@@ -331,7 +546,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if(!payload.neighbors[nodeId]) return;
         lockedNode = nodeId;
         const segs = buildLineSegments(nodeId);
-        for(let d=0; d<3; d++){ const idx = payload.hover_trace_idxs[d]; Plotly.restyle(gd, {x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}, [idx]); }
+        for(let d=0; d<3; d++){ const idx = payload.hover_trace_idxs[d]; Plotly.restyle(gd, {x: [segs[d].x], y: [segs[d].y], z: [segs[d].z], text: [segs[d].text]}, [idx]); }
         // update plot title to reflect current target
         try { Plotly.relayout(gd, {"title.text": `AA-triplet network: target ${nodeId}`}); } catch(e) { console.warn('Could not update title', e); }
         // update dynamic title span (controls label)
@@ -342,8 +557,11 @@ document.addEventListener('DOMContentLoaded', function() {
         // update the placeholder target trace so the selected node is highlighted
         try {
             const cnt = payload.counts && payload.counts[nodeId] ? payload.counts[nodeId] : 0;
+            const normFreq = payload.normalized_freqs && payload.normalized_freqs[nodeId] ? payload.normalized_freqs[nodeId] : 0;
             const sz = 10 + (Math.log(1 + cnt) * 2);
-            Plotly.restyle(gd, {x: [[c[0]]], y: [[c[1]]], z: [[c[2]]], text: [[`<b>${nodeId}</b><br>count: ${cnt}`]], 'marker.size': [[sz]]}, [payload.target_trace_idx]);
+            let displayText = `<b>${nodeId}</b><br>count: ${cnt}`;
+            if (normFreq > 0) displayText += `<br>norm_freq: ${normFreq.toFixed(6)}`;
+            Plotly.restyle(gd, {x: [[c[0]]], y: [[c[1]]], z: [[c[2]]], text: [[displayText]], 'marker.size': [[sz]]}, [payload.target_trace_idx]);
         } catch(e) { console.warn('Could not update target trace', e); }
     }
     btn.addEventListener('click', function() { zoomToNode(input.value.trim().toUpperCase()); });
@@ -372,9 +590,23 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     // Zoom In button: prioritize typed input then fallback to last target or initial
     zoomInBtn.addEventListener('click', function(){
-        const typed = input.value.trim().toUpperCase();
-        const target = typed || zoomInTarget || payload.initial_target;
-        if(!target) { alert('No target specified in the input'); return; }
+        consif (!nodeId) {
+                console.log('Hover: no node ID extracted');
+                return;
+            }
+            console.log('Hover on node:', nodeId, 'Locked node:', lockedNode);
+            hoverNode = nodeId;
+            // If a different node is locked, don't show hover edges
+            if(lockedNode && lockedNode !== nodeId) {
+                updateDebugStatus(`Hover: ${nodeId} (ignored, ${lockedNode} locked)`);
+                return;
+            }
+            // If this node has no neighbors, skip
+            if(!payload.neighbors[nodeId]) {
+                console.log('Node has no neighbors:', nodeId);
+                return;
+            }
+            // Draw edges for this node'); return; }
         zoomToNode(target);
     });
     // remove Plotly's built-in updatemenus so our on-page controls are the authoritative Zoom buttons
@@ -386,31 +618,40 @@ document.addEventListener('DOMContentLoaded', function() {
     gd.on('plotly_hover', function(evt){
         try{
             const point = evt.points[0];
-            let hoverText = point.text || point.customdata || '';
-            const nodeId = String(hoverText).split('<br>')[0];
+            const nodeId = extractNodeId(point);
             hoverNode = nodeId;
-            if(lockedNode && lockedNode !== nodeId) return;
-            if(!payload.neighbors[nodeId]) return;
-            const segs = buildLineSegments(nodeId);
-            for(let d=0; d<3; d++){
-                const idx = payload.hover_trace_idxs[d];
-                Plotly.restyle(gd, {x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}, [idx]);
-            }
-        } catch(e){ console.error('hover handler error', e); }
-    });
-
-    gd.on('plotly_click', function(evt){
+        console.log('Click event received:', evt);
+        updateDebugStatus('CLICK event received!');
         if(evt && evt.points && evt.points.length>0){
             const point = evt.points[0];
-            const nodeId = String((point.text||'').split('<br>')[0]);
-            if(!payload.neighbors[nodeId]) return;
+            console.log('Click point data:', point);
+            const nodeId = extractNodeId(point);
+            console.log('Extracted node ID from click:', nodeId);
+            updateDebugStatus(`Click: ${nodeId || 'NO ID'}`);
+            
+            if(!nodeId) {
+                console.warn('Click: Could not extract node ID');
+                updateDebugStatus('Click: Failed to extract node ID');
+                return;
+            }
+            
+            if(!payload.neighbors[nodeId]) {
+                console.log('Click: Node has no neighbors:', nodeId);
+                updateDebugStatus(`Click: ${nodeId} has no neighbors`);
+                return;
+            }
+            
+            // Toggle: if clicking the same locked node, unlock it
             if(lockedNode === nodeId){
+                console.log('Unlocking node:', nodeId);
+                updateDebugStatus(`UNLOCKED: ${nodeId}`);
                 lockedNode = null;
-                if(hoverNode){
+                // If still hovering over a node, show its edges; otherwise clear
+                if(hoverNode && payload.neighbors[hoverNode]){
                     const segs = buildLineSegments(hoverNode);
                     for(let d=0; d<3; d++){
                         const idx = payload.hover_trace_idxs[d];
-                        Plotly.restyle(gd, {x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}, [idx]);
+                        Plotly.restyle(gd, {x: [segs[d].x], y: [segs[d].y], z: [segs[d].z], text: [segs[d].text]}, [idx]);
                     }
                 } else {
                     for(let d=0; d<3; d++){
@@ -418,30 +659,56 @@ document.addEventListener('DOMContentLoaded', function() {
                         Plotly.restyle(gd, {x: [[]], y: [[]], z: [[]]}, [idx]);
                     }
                 }
-                // restore original title when unlocking
+                // restore original title
                 try { Plotly.relayout(gd, {"title.text": originalTitle}); } catch(e) {}
                 try { if (titleSpan) titleSpan.textContent = originalTitle; } catch(e) {}
-                // clear dynamic target trace
+                // clear dynamic target marker
                 try { Plotly.restyle(gd, {x: [[]], y: [[]], z: [[]], text: [[]]}, [payload.target_trace_idx]); } catch(e) {}
+                // clear side panel
+                try { renderOutgoingEdges(null); } catch(e) {}
             } else {
+                // Lock this node: draw and persist its edges
+                updateDebugStatus(`🔒 LOCKED: ${nodeId}`);
+                console.log('Locking node:', nodeId);
                 lockedNode = nodeId;
                 const segs = buildLineSegments(nodeId);
                 for(let d=0; d<3; d++){
                     const idx = payload.hover_trace_idxs[d];
-                    Plotly.restyle(gd, {x: [segs[d].x], y: [segs[d].y], z: [segs[d].z]}, [idx]);
+                    Plotly.restyle(gd, {x: [segs[d].x], y: [segs[d].y], z: [segs[d].z], text: [segs[d].text]}, [idx]);
                 }
-                try { Plotly.relayout(gd, {"title.text": `AA-triplet network: target ${nodeId}`}); } catch(e) {}
-                try { if (titleSpan) titleSpan.textContent = `AA-triplet network: target ${nodeId}`; } catch(e) {}
-                // update dynamic target trace when locking
+                // update title to show locked node
+                try { Plotly.relayout(gd, {"title.text": `AA-triplet network: locked on ${nodeId}`}); } catch(e) {}
+                try { if (titleSpan) titleSpan.textContent = `AA-triplet network: locked on ${nodeId}`; } catch(e) {}
+                // highlight the locked node with a marker
                 try {
                     const c = payload.coords[nodeId];
                     const cnt = payload.counts && payload.counts[nodeId] ? payload.counts[nodeId] : 0;
                     const sz = 10 + (Math.log(1 + cnt) * 2);
-                    Plotly.restyle(gd, {x: [[c[0]]], y: [[c[1]]], z: [[c[2]]], text: [[`<b>${nodeId}</b><br>count: ${cnt}`]], 'marker.size': [[sz]]}, [payload.target_trace_idx]);
+                    Plotly.restyle(gd, {x: [[c[0]]], y: [[c[1]]], z: [[c[2]]], text: [[`<b>${nodeId}</b> (LOCKED)<br>count: ${cnt}`]], 'marker.size': [[sz]]}, [payload.target_trace_idx]);
                 } catch(e) { console.warn('Could not update target trace on click', e); }
+                // update side panel with outgoing edges
+                try { renderOutgoingEdges(nodeId); } catch(e) {}
             }
         } else {
+            // Click on empty space: clear lock
+            updateDebugStatus('Click on empty space - cleared');
+            console.log('Click on empty space - clearing lock');
             lockedNode = null;
+            for(let d=0; d<3; d++){
+                const idx = payload.hover_trace_idxs[d];
+                Plotly.restyle(gd, {x: [[]], y: [[]], z: [[]]}, [idx]);
+            }
+            try { Plotly.relayout(gd, {"title.text": originalTitle}); } catch(e) {}
+            try { if (titleSpan) titleSpan.textContent = originalTitle; } catch(e) {}
+        console.log('Unhover event - locked node:', lockedNode);
+        hoverNode = null;
+        // If a node is locked, keep showing its edges (don't clear on unhover)
+        if(lockedNode) {
+            console.log('Node is locked, keeping edges visible');
+            return;
+        }
+        // Otherwise, clear the edge traces
+        console.log('Clearing edges on unhover');
             for(let d=0; d<3; d++){
                 const idx = payload.hover_trace_idxs[d];
                 Plotly.restyle(gd, {x: [[]], y: [[]], z: [[]]}, [idx]);
@@ -450,6 +717,9 @@ document.addEventListener('DOMContentLoaded', function() {
             try { if (titleSpan) titleSpan.textContent = originalTitle; } catch(e) {}
             // clear dynamic target trace
             try { Plotly.restyle(gd, {x: [[]], y: [[]], z: [[]], text: [[]]}, [payload.target_trace_idx]); } catch(e) {}
+
+            // clear side panel when clicking empty space
+            try { renderOutgoingEdges(null); } catch(e) {}
         }
     });
 
@@ -464,9 +734,14 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 """
+        # Ensure the injected JS ends up inside the HTML document (before </body>)
+        if '</body>' in html_str:
+            html_str = html_str.replace('</body>', extra_js + '\n</body>')
+        else:
+            html_str = html_str + extra_js
+
         with open(out_html, 'w', encoding='utf-8') as fh:
             fh.write(html_str)
-            fh.write(extra_js)
         print(f"Wrote interactive plot to: {out_html}")
     else:
         fig.show()
@@ -504,17 +779,32 @@ if __name__ == '__main__':
     main()
 
 
-def plot_from_aa_network(aa_net, target: str = None, out_html: str = None):
+def plot_from_aa_network(aa_net, target: str = None, out_html: str = None, node_threshold: float = 0.0, edge_threshold: float = 0.0):
     """Convenience wrapper to plot directly from a NetworksManager.aa_network
 
     Usage from Python:
         from scripts.plot_aa3_plotly import plot_from_aa_network
-        plot_from_aa_network(networks.get_aa_network(), target='ABC')
+        plot_from_aa_network(networks.get_aa_network(), target='ABC', node_threshold=0.001, edge_threshold=0.05)
+    
+    Args:
+        aa_net: KmerNetwork instance
+        target: Optional initial target node
+        out_html: Optional path to save HTML
+        node_threshold: Minimum normalized frequency for nodes (0.0 to 1.0)
+        edge_threshold: Minimum probability for edges (0.0 to 1.0)
     """
     if aa_net is None:
         raise RuntimeError('aa_net is None')
+    
+    # Apply normalization and thresholds before plotting
+    aa_net.normalize_nodes()
+    aa_net.apply_node_threshold(node_threshold)
+    aa_net.compute_edge_probabilities()
+    aa_net.apply_edge_threshold(edge_threshold)
+    
     nodes = sorted(aa_net.nodes.keys())
     coords_map, letters = build_coords_map(nodes)
-    tgt = target if target else nodes[0]
+    tgt = target
     counts_map = {k: {'count': aa_net.nodes[k].get('count', 0), 'color': aa_net.nodes[k].get('color', 0)} for k in nodes}
-    plot_aa_network(nodes, coords_map, letters, target=tgt, out_html=out_html, counts_map=counts_map)
+    plot_aa_network(nodes, coords_map, letters, target=tgt, out_html=out_html, counts_map=counts_map, 
+                   aa_network=aa_net, node_threshold=node_threshold, edge_threshold=edge_threshold)
