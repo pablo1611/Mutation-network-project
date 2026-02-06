@@ -109,3 +109,7 @@ CSV files should contain columns like:
 - `seq_id`, `sample_id`, `subject_id`, `clone_id`, `functional`, `copy_number`, `cdr3_aa`, `sequence`, `germline`, `ab_target`, `time_point`
 
 The app filters to the highest `copy_number` per `clone_id` for analysis.
+
+## Note on Analysis Duration
+
+Important: analyses may take a while depending on dataset size and selected options. Large datasets or extended comparisons can run from several minutes up to hours. Do not close the application, terminal, or interrupt the process while an analysis is running; wait for it to finish. Output files will be written to the `output/` directory when the run completes.

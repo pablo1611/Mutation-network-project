@@ -7,7 +7,9 @@ import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import socket
 import pandas as pd
+import logging
 from datetime import datetime
+import webbrowser
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -32,15 +34,46 @@ def get_output_dir():
     """
     # Check if running as a bundled app (PyInstaller sets this)
     if getattr(sys, 'frozen', False):
-        # Running as bundled app - use Documents folder
+        # Running as bundled app - save into user's Documents/output to
+        # keep the same URL path used in development (i.e. '/output/...').
         home = os.path.expanduser("~")
-        out_dir = os.path.join(home, "Documents", "AntibodySequenceLoader_Output")
+        out_dir = os.path.join(home, "Documents", "output")
     else:
         # Running in development - use project's output folder
         out_dir = os.path.join(os.getcwd(), "output")
     
     os.makedirs(out_dir, exist_ok=True)
     return out_dir
+
+
+def open_path(path_or_url):
+    """Open a file path or URL in a cross-platform way.
+
+    Uses `os.startfile` on Windows, `open` on macOS, `xdg-open` on Linux,
+    and falls back to `webbrowser.open` when needed.
+    """
+    try:
+        # URLs should be handled by the browser
+        if isinstance(path_or_url, str) and (path_or_url.startswith('http://') or path_or_url.startswith('https://')):
+            webbrowser.open(path_or_url, new=2)
+            return
+
+        if sys.platform.startswith('win'):
+            os.startfile(path_or_url)
+        elif sys.platform == 'darwin':
+            subprocess.run(['open', path_or_url])
+        else:
+            # Assume Linux/Unix
+            try:
+                subprocess.run(['xdg-open', path_or_url])
+            except Exception:
+                webbrowser.open(path_or_url, new=2)
+    except Exception:
+        # Best-effort fallback
+        try:
+            webbrowser.open(path_or_url, new=2)
+        except Exception:
+            pass
 
 def save_edges_to_csv(network, output_path, dataset_name="", analysis_type=""):
     """Save all edges with their probabilities (weights) to a CSV file.
@@ -89,34 +122,88 @@ def save_edges_to_csv(network, output_path, dataset_name="", analysis_type=""):
 
 class AntibodySequenceLoaderApp(ctk.CTk):
     def __init__(self):
+        # Initialize file logger and start a persistent local HTTP server to serve generated plot HTML files.
+        try:
+            # Ensure an output dir exists and configure a file logger so exe users can inspect logs.
+            log_dir = get_output_dir()
+            log_path = os.path.join(log_dir, "plot_server.log")
+            self._logger = logging.getLogger("MutationApp")
+            self._logger.setLevel(logging.DEBUG)
+            if not any(isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', None) == os.path.abspath(log_path)
+                       for h in self._logger.handlers):
+                fh = logging.FileHandler(log_path, encoding='utf-8')
+                fh.setLevel(logging.DEBUG)
+                fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s'))
+                self._logger.addHandler(fh)
+            self._logger.info(f"Logger initialized at: {log_path}")
+        except Exception:
+            # If logging setup fails, fall back to prints but continue
+            try:
+                print("Failed to initialize logger")
+            except Exception:
+                pass
+
         # Start a persistent local HTTP server to serve generated plot HTML files.
         # This avoids starting per-plot servers and makes the behavior identical
         # to running `app.py` from source where Plotly uses a localhost URL.
         try:
-            serve_dir = os.getcwd()
+            # When bundled, `get_output_dir()` points to the user's Documents
+            # folder (where we save generated HTML). Ensure the local HTTP
+            # server serves that directory so the exe can open the files.
+            if getattr(sys, 'frozen', False):
+                # Serve the parent directory so the URL path includes '/output/...'
+                serve_dir = os.path.dirname(get_output_dir())
+            else:
+                serve_dir = os.getcwd()
             class _Handler(SimpleHTTPRequestHandler):
                 def __init__(self, *args, **kwargs):
                     super().__init__(*args, directory=serve_dir, **kwargs)
-
-            # find a free port and start server in background
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
-                _s.bind(('127.0.0.1', 0))
-                _port = _s.getsockname()[1]
-
+                def log_message(self, format, *args):
+                    try:
+                        logging.getLogger('MutationApp').info("%s - - %s" % (self.client_address[0], format % args))
+                    except Exception:
+                        try:
+                            print("HTTP: ", format % args)
+                        except Exception:
+                            pass
+            # Let the HTTP server bind to port 0 (ephemeral) directly and read back the chosen port.
             try:
-                httpd = ThreadingHTTPServer(('127.0.0.1', _port), _Handler)
+                httpd = ThreadingHTTPServer(('127.0.0.1', 0), _Handler)
+                _port = httpd.server_address[1]
+                # Attach logger to server so handlers can use it
+                try:
+                    httpd.logger = logging.getLogger('MutationApp')
+                except Exception:
+                    pass
+
                 def _serve():
                     try:
                         httpd.serve_forever()
                     except Exception:
-                        pass
+                        try:
+                            logging.getLogger('MutationApp').exception('HTTP server crashed')
+                        except Exception:
+                            pass
+
                 t = threading.Thread(target=_serve, daemon=True)
                 t.start()
-                # expose the server port to other modules via env var
+                # expose the server port and served directory to other modules via env vars
                 os.environ['PLOT_SERVER_PORT'] = str(_port)
+                os.environ['PLOT_SERVER_DIR'] = os.path.abspath(serve_dir)
+                try:
+                    logging.getLogger('MutationApp').info(f"Started local plot server on 127.0.0.1:{_port} serving: {serve_dir}")
+                except Exception:
+                    try:
+                        print(f"Started local plot server on 127.0.0.1:{_port} serving: {serve_dir}")
+                    except Exception:
+                        pass
             except Exception:
-                # if server fails, don't block app startup
-                pass
+                # if server fails, don't block app startup — but log the error so it's visible
+                try:
+                    logging.getLogger('MutationApp').exception('Failed to start local plot server')
+                except Exception:
+                    import traceback as _tb
+                    _tb.print_exc()
         except Exception:
             pass
         super().__init__()
@@ -442,11 +529,38 @@ class AntibodySequenceLoaderApp(ctk.CTk):
                 # Open the generated HTML via the local server (so embedded JS runs reliably)
                 port = os.environ.get('PLOT_SERVER_PORT')
                 if port:
-                    rel_path = os.path.relpath(out_html, os.getcwd()).replace(os.sep, '/')
-                    url = f"http://127.0.0.1:{port}/{rel_path}"
-                    subprocess.run(['open', url])
+                    base_dir = os.environ.get('PLOT_SERVER_DIR', os.getcwd())
+                    try:
+                        rel_path = os.path.relpath(out_html, base_dir).replace(os.sep, '/')
+                    except Exception:
+                        rel_path = None
+
+                    # If the output HTML is inside the served directory, open via local server URL.
+                    if rel_path and not rel_path.startswith('..'):
+                        url = f"http://127.0.0.1:{port}/{rel_path}"
+                        try:
+                            getattr(self, '_logger', logging.getLogger('MutationApp')).info(
+                                f"Opening plot via local HTTP server: {url} (base_dir={base_dir}, rel_path={rel_path})")
+                        except Exception:
+                            try:
+                                print(f"Opening plot via local HTTP server: {url}")
+                            except Exception:
+                                pass
+                        open_path(url)
+                    else:
+                        # Fallback to file:// URL when file is outside served dir
+                        file_url = f"file://{out_html}"
+                        try:
+                            getattr(self, '_logger', logging.getLogger('MutationApp')).warning(
+                                f"Local server not available or file outside served dir — opening file URL: {file_url}")
+                        except Exception:
+                            try:
+                                print(f"Local server not available or file outside served dir — opening file URL: {file_url}")
+                            except Exception:
+                                pass
+                        open_path(file_url)
                 else:
-                    subprocess.run(['open', out_html])
+                    open_path(out_html)
         except Exception as e:
             print(f"Debug: Exception in analyze_dataset: {e}")
             import traceback
@@ -472,12 +586,12 @@ class AntibodySequenceLoaderApp(ctk.CTk):
             out_dir = get_output_dir()
             out_path = os.path.join(out_dir, f"triplets_dataset_1.csv")
             self.triplet_df_r1.to_csv(out_path, index=False)
-            subprocess.run(['open', out_path])
+            open_path(out_path)
         elif reigon_index == 1 and self.triplet_df_r2 is not None:
             out_dir = get_output_dir()
             out_path = os.path.join(out_dir, f"triplets_dataset_2.csv")
             self.triplet_df_r2.to_csv(out_path, index=False)
-            subprocess.run(['open', out_path])
+            open_path(out_path)
         else:
             messagebox.showerror("Error", "Triplets not available. Please analyze the dataset first.")
 
